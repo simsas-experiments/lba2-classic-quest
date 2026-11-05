@@ -1783,7 +1783,7 @@ void DoFoundObj(S32 numvar) {
 
         //		else
         {
-            if (Input OR MyKey) {
+            if (DialogAdvanceInput() OR DialogAdvanceKey()) {
                 if (keyreleased)
                     keypress = TRUE;
             } else

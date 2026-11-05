@@ -1778,7 +1778,11 @@ S32 NextDialCar() {
         iter = 1000000;
 
     if (iter >= 0) {
-        iter = 1 + iter / TIME_DELTA_CAR;
+        /* Wall-clock typewriter: type only whole TIME_DELTA_CAR intervals.
+           The extra leading 1 advanced at least one glyph per call, so the
+           rate followed the refresh rate instead of the authored 20 ms per
+           character (noticeably fast on the 90 Hz headset). */
+        iter = iter / TIME_DELTA_CAR;
 
         savetimer += iter * TIME_DELTA_CAR;
 
@@ -2302,7 +2306,7 @@ void Dial(S32 text, S32 drawscene) {
 
         if (ret == 2 && !DbgSkipModals) /*      Attente de Touche       */
         {
-            while (MyKey OR Input) {
+            while (DialogAdvanceKey() OR DialogAdvanceInput()) {
                 TestSpeak(); // Tu relaches ?
                 SpeakAnimation();
             }
@@ -2311,11 +2315,11 @@ void Dial(S32 text, S32 drawscene) {
                 S32 endtimer = TimerRefHR + DialNbLine * 1000;
 
                 while (TimerRefHR < endtimer
-                                        AND !MyKey AND !Input) {
+                                        AND !DialogAdvanceKey() AND !DialogAdvanceInput()) {
                     SpeakAnimation();
                 }
             } else
-                while (!MyKey AND !Input) {
+                while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
                     TestSpeak(); // Tu appuies ?
                     SpeakAnimation();
                 }
@@ -2345,7 +2349,7 @@ void Dial(S32 text, S32 drawscene) {
     ) {
         ManageTime();
 
-        while (MyKey OR Input) {
+        while (DialogAdvanceKey() OR DialogAdvanceInput()) {
             SpeakAnimation();
         }
 
@@ -2353,11 +2357,11 @@ void Dial(S32 text, S32 drawscene) {
             S32 endtimer = TimerRefHR + DialNbLine * 1000;
 
             while (TimerRefHR < endtimer
-                                    AND !MyKey AND !Input) {
+                                    AND !DialogAdvanceKey() AND !DialogAdvanceInput()) {
                 SpeakAnimation();
             }
         } else
-            while (!MyKey AND !Input) {
+            while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
                 SpeakAnimation();
             }
     }
@@ -2492,12 +2496,12 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
         TestSpeak();
         if (dialstat == 2) // encore 1 page
         {
-            while (MyKey OR Input) {
+            while (DialogAdvanceKey() OR DialogAdvanceInput()) {
                 TestSpeak();
                 MyGetInput();
             }
 
-            while (!MyKey AND !Input) {
+            while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
                 TestSpeak();
                 MyGetInput();
             }

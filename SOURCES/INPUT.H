@@ -127,6 +127,14 @@ extern void WriteInputConfig(void);
 //-------------------------------------------------------------------------
 extern void MyGetInput(void);
 //-------------------------------------------------------------------------
+/* Input bits that may advance a modal dialogue. On Quest, movement and camera
+   axes are excluded so a held stick cannot page through a scene-triggered
+   message. */
+extern U32 DialogAdvanceInput(void);
+/* MyKey equivalent of DialogAdvanceInput: filters the gamepad stick/trigger
+   scancodes that MyGetInput exposes as "any key" presses. */
+extern S32 DialogAdvanceKey(void);
+//-------------------------------------------------------------------------
 extern void WaitNoInput(void);
 //-------------------------------------------------------------------------
 extern void WaitInput(void);

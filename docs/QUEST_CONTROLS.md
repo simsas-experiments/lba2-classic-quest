@@ -83,6 +83,9 @@ actions.
 |---|---|
 | A | Advance the dialogue to the next page or box |
 
+Movement and camera axes do not advance a dialogue on the headset, so walking
+into a scene-triggered message cannot page through it.
+
 ## Cheats
 
 Touch the right thumbrest and press a face button. The chord is edge
