@@ -55,9 +55,6 @@ S32 FlagRestoreCD = 0;
 S32 FlagDial = DIAL_DEF;
 
 S32 FlagSpeedMessage = FALSE; // cf MyDial() and NextDialCar()
-/* Quest A acts like ESC: edge-triggered so the press that opens the
-   dialogue does not immediately abort it. */
-static S32 s_dialAPrev = 0;
 
 S32 DialNbLine; // pour la version demo le 02/08/96
 
@@ -1317,7 +1314,10 @@ void NormalWinDial() {
        LBA2_FAKE_VR_DIALOG lets a desktop build review that framing. */
     if (OpenXR_GetSwapchainWidth() || getenv("LBA2_FAKE_VR_DIALOG") != NULL) {
         Dial_Y1 = (S32)ModeDesiredY * 3 / 4;
-        Dial_Y0 = Dial_Y1 - 112;
+        /* Keep the authored 129 px strip: three 38 px lines plus the 8 px
+           top inset need more than the 112 px panel used before, which cut
+           the third line off at the bottom edge. */
+        Dial_Y0 = Dial_Y1 - 129;
         /* Centred, about 36% of the frame width.  A little smaller than the
          * flat layout reads as a panel slightly farther from the face and
          * leaves more of the eye's visible band around it. */
@@ -2264,7 +2264,6 @@ void Dial(S32 text, S32 drawscene) {
 
     OpenDial(text);
 
-    s_dialAPrev = (Input & I_ACTION_ALWAYS) != 0;
     while (TRUE) {
         ret = NextDialCar();
 
@@ -2322,13 +2321,6 @@ void Dial(S32 text, S32 drawscene) {
                 }
 
             DialNbLine = 0;
-        }
-
-        {
-            const S32 aDown = (Input & I_ACTION_ALWAYS) != 0;
-            if (aDown && !s_dialAPrev)
-                flagabort = 1;
-            s_dialAPrev = aDown;
         }
 
         // Harness (console `skipmodals`): abort the dialog immediately, as if the player pressed
@@ -2464,7 +2456,6 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
         //              FlagDisplayText = memoflagdisplaytext ;
     }
 
-    s_dialAPrev = (Input & I_ACTION_ALWAYS) != 0;
     //      while( dialstat AND !esc )
     while (!esc) {
         PERSO_DialogUpdateWorld();
@@ -2512,10 +2503,7 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
             }
         } else {
             MyGetInput();
-            const S32 aDown = (Input & I_ACTION_ALWAYS) != 0;
-            const S32 aPressed = aDown && !s_dialAPrev;
-            s_dialAPrev = aDown;
-            if ((MyKey == K_ESC OR Input & I_MENUS OR aPressed)
+            if ((MyKey == K_ESC OR Input & I_MENUS)
                     OR((dialstat == 0) AND(!TestSpeak()))) // Tout fini
             {
                 // affiche fin du message a vitesse grand v

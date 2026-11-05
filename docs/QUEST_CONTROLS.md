@@ -81,7 +81,7 @@ actions.
 
 | Input | Action |
 |---|---|
-| A | Skip the current dialogue, like ESC |
+| A | Advance the dialogue to the next page or box |
 
 ## Cheats
 
