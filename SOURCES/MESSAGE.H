@@ -119,6 +119,9 @@ extern S32 NextDialCar(void);
 /* Fast-forward the current page on the next NextDialCar call.  Used by the
    Quest A skip before that call would be reached by the typewriter clock. */
 extern void Dial_SkipPage(void);
+/* Stop the current voice chunk but keep the next one queued, so skipping a
+   page cuts that page's audio without cancelling the rest of the dialogue. */
+extern void Dial_SkipVoicePage(void);
 extern void CloseDial(void);
 extern void InitWhoSpeak(S32 numobj);
 extern void ClearWhoSpeak(void);

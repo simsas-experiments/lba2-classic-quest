@@ -1092,6 +1092,17 @@ void StopSpeak() {
 */
 }
 /*-------------------------------------------------------------------------*/
+void Dial_SkipVoicePage(void) {
+    /* Keep FlagNextVoc: the next voice chunk belongs to the next page and
+       should still play when TestSpeak() advances to it. */
+    if (!FlagSpeak)
+        return;
+    if (!FdNar)
+        return;
+    if (IsSamplePlaying(SPEAK_SAMPLE))
+        StopOneSample(SPEAK_SAMPLE);
+}
+/*-------------------------------------------------------------------------*/
 #else
 
 //-------------------------------------------------------------------------
@@ -1109,6 +1120,8 @@ S32 Speak(S32 text) {
 S32 TestSpeak() {
     return (0);
 }
+//----------------------------------------------------------------------------
+void Dial_SkipVoicePage(void) {}
 //----------------------------------------------------------------------------
 //void  StopSpeak() { }
 //----------------------------------------------------------------------------
@@ -2297,7 +2310,7 @@ void Dial(S32 text, S32 drawscene) {
             if (!(Input & I_ACTION_ALWAYS)) {
                 skipReady = 1;
             } else if (skipReady && ret == 1) {
-                StopSpeak();
+                Dial_SkipVoicePage();
                 Dial_SkipPage();
                 skipReady = 0;
             }
@@ -2351,7 +2364,7 @@ void Dial(S32 text, S32 drawscene) {
             /* A page turn skips the rest of the page's voice too.  The demo
                timer is not a player skip, so it leaves the voice alone. */
             if (!DemoSlide)
-                StopSpeak();
+                Dial_SkipVoicePage();
 
             DialNbLine = 0;
         }
