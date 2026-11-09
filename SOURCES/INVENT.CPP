@@ -1784,7 +1784,11 @@ void DoFoundObj(S32 numvar) {
         //		else
         {
             if (DialogAdvanceInput() OR DialogAdvanceKey()) {
-                if (keyreleased)
+                /* A press while the page is still typing is not an advance.
+                   Latched here, the pick-up action (or any key pressed while
+                   reading) would fly the box out the instant the last glyph
+                   lands, before the player has read a finished line. */
+                if (keyreleased && dialstat != 1)
                     keypress = TRUE;
             } else
                 keyreleased = TRUE;
