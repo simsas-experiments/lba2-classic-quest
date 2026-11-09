@@ -12,6 +12,7 @@
 #include <3D/COPYMAT.H>
 #include <3D/LPROJ.H>
 #include <3D/DECORVBO.H>
+#include <3D/LIGHT.H>
 #include <SVGA/CLIP.H>
 #include <POLYGON/POLY.H>
 #ifdef USE_GPURENDERER
@@ -71,6 +72,147 @@ Func_TransNumPtr *TransFctBody = NULL; // Pointer to a conversion fct that conve
 // Light list
 U16 ListLights[MAX_NB_POINTS + MAX_NB_POLYS];
 
+/* ── Normal smoothing ───────────────────────────────────────────────────── */
+/* Point normals rebuilt from the adjacent face normals.  A face is included
+   only when its normal is within this angle of the point's authored normal,
+   so a hard corner stays close to the normal its author chose. */
+#define NORMAL_SMOOTH_CREASE_COS 0.5 /* cos(60 degrees) */
+
+static S32 s_normalSmoothing = 0; /* GL renderer sets this each frame */
+static S32 s_smoothThisBody = 0;  /* current body was smoothed successfully */
+static S32 s_smoothedNormalsValid = 0;
+static TYPE_VT16
+    s_smoothedNormals[NORMAL_SMOOTH_MAX_POINTS + NORMAL_SMOOTH_MAX_FACES];
+static T_NORMAL_SMOOTH_FACE s_smoothFaces[NORMAL_SMOOTH_MAX_FACES];
+
+/* Per-face Newell area vectors, shared by one smoothing pass.  Single-threaded
+   renderer: the arrays are scratch, not state. */
+static double s_smoothFaceVec[NORMAL_SMOOTH_MAX_FACES][3];
+static double s_smoothFaceLen[NORMAL_SMOOTH_MAX_FACES];
+static U8 s_smoothFaceUsed[NORMAL_SMOOTH_MAX_FACES];
+
+void NormalSmooth_SetEnabled(S32 enabled) {
+    s_normalSmoothing = enabled ? 1 : 0;
+    s_smoothThisBody = s_normalSmoothing;
+    if (!s_normalSmoothing) {
+        s_smoothedNormalsValid = 0;
+    }
+}
+
+S32 NormalSmooth_Enabled(void) { return s_normalSmoothing; }
+
+S32 NormalSmooth_Build(const T_OBJ_POINT *points, const TYPE_VT16 *authored,
+                       S32 pointCount, S32 authoredCount,
+                       const T_NORMAL_SMOOTH_FACE *faces, S32 faceCount,
+                       TYPE_VT16 *out) {
+    if (points == NULL || authored == NULL || faces == NULL || out == NULL ||
+        pointCount <= 0 || pointCount > NORMAL_SMOOTH_MAX_POINTS ||
+        faceCount <= 0 || faceCount > NORMAL_SMOOTH_MAX_FACES ||
+        authoredCount < pointCount ||
+        authoredCount > NORMAL_SMOOTH_MAX_POINTS + NORMAL_SMOOTH_MAX_FACES) {
+        return 0;
+    }
+
+    /* Entries past the point list are extra authored normals; keep them so
+       face-normal indices on the body still resolve. */
+    for (S32 i = 0; i < authoredCount; i++) {
+        out[i] = authored[i];
+    }
+
+    for (S32 f = 0; f < faceCount; f++) {
+        const T_NORMAL_SMOOTH_FACE *face = &faces[f];
+        s_smoothFaceUsed[f] = 0;
+        if (face->Count < 3 || face->Count > 4) {
+            continue;
+        }
+        double nx = 0.0;
+        double ny = 0.0;
+        double nz = 0.0;
+        S32 valid = 1;
+        for (S32 e = 0; e < face->Count; e++) {
+            S32 p = face->P[e];
+            S32 q = face->P[(e + 1) % face->Count];
+            if (p < 0 || p >= pointCount || q < 0 || q >= pointCount) {
+                valid = 0;
+                break;
+            }
+            const T_OBJ_POINT *a = &points[p];
+            const T_OBJ_POINT *b = &points[q];
+            nx += (double)(a->Y - b->Y) * (double)(a->Z + b->Z);
+            ny += (double)(a->Z - b->Z) * (double)(a->X + b->X);
+            nz += (double)(a->X - b->X) * (double)(a->Y + b->Y);
+        }
+        if (!valid) {
+            continue;
+        }
+        const double len2 = nx * nx + ny * ny + nz * nz;
+        if (len2 < 1.0e-12) {
+            continue; /* degenerate face */
+        }
+        s_smoothFaceVec[f][0] = nx;
+        s_smoothFaceVec[f][1] = ny;
+        s_smoothFaceVec[f][2] = nz;
+        s_smoothFaceLen[f] = sqrt(len2);
+        s_smoothFaceUsed[f] = 1;
+    }
+
+    for (S32 i = 0; i < pointCount; i++) {
+        const TYPE_VT16 *an = &authored[i];
+        const double ax = (double)an->X;
+        const double ay = (double)an->Y;
+        const double az = (double)an->Z;
+        const double alen2 = ax * ax + ay * ay + az * az;
+        S32 haveRef = (alen2 > 1.0e-12) ? 1 : 0;
+        const double alen = haveRef ? sqrt(alen2) : 0.0;
+        double rx = 0.0;
+        double ry = 0.0;
+        double rz = 0.0;
+        S32 used = 0;
+
+        for (S32 f = 0; f < faceCount; f++) {
+            const T_NORMAL_SMOOTH_FACE *face = &faces[f];
+            if (!s_smoothFaceUsed[f] || face->Group != points[i].Group) {
+                continue;
+            }
+            S32 contains = 0;
+            for (S32 e = 0; e < face->Count; e++) {
+                if (face->P[e] == i) {
+                    contains = 1;
+                    break;
+                }
+            }
+            if (!contains) {
+                continue;
+            }
+            if (haveRef) {
+                const double dot =
+                    (s_smoothFaceVec[f][0] * ax + s_smoothFaceVec[f][1] * ay +
+                     s_smoothFaceVec[f][2] * az) /
+                    (s_smoothFaceLen[f] * alen);
+                if (dot < NORMAL_SMOOTH_CREASE_COS) {
+                    continue;
+                }
+            }
+            rx += s_smoothFaceVec[f][0];
+            ry += s_smoothFaceVec[f][1];
+            rz += s_smoothFaceVec[f][2];
+            used = 1;
+        }
+
+        const double rlen2 = rx * rx + ry * ry + rz * rz;
+        if (!used || rlen2 < 1.0e-12) {
+            continue; /* keep the authored normal */
+        }
+        const double scale = (double)LIB_NORMAL_UNIT / sqrt(rlen2);
+        out[i].X = (S16)lrint(rx * scale);
+        out[i].Y = (S16)lrint(ry * scale);
+        out[i].Z = (S16)lrint(rz * scale);
+        out[i].Grp = an->Grp;
+    }
+
+    return 1;
+}
+
 /* Static decor VBO capture.  The polygon handlers replay a non-animated body
    in model space; this buffer receives one entry per triangle vertex so the
    renderer can bake the decor rotation/translation into a VBO once. */
@@ -92,6 +234,9 @@ void DecorVBO_SetFlatColor(S32 color) { s_decorFlatColor = color; }
 static const TYPE_VT16 *DecorVBONormal(S32 index) {
     if (lBody == NULL) {
         return NULL;
+    }
+    if (s_smoothedNormalsValid && index >= 0 && index < lBody->NbPoints) {
+        return &s_smoothedNormals[index];
     }
     if (index >= 0 && index < lBody->NbNormales) {
         return (const TYPE_VT16 *)((const U8 *)lBody + lBody->OffNormales) +
@@ -347,6 +492,109 @@ typedef struct
     U16 HandleEnv;
 } STRUC_POLY4_ENV;
 
+/* Collect the polygon point indices into the smoothing face list.  Every
+   polygon layout starts with P1..P4, so the record size is all the parser
+   needs to know about a type.  Returns 0 when the body cannot be smoothed;
+   the caller then leaves the authored normals in place. */
+static S32 BuildBodySmoothNormals(T_BODY_HEADER *body) {
+    s_smoothThisBody = 0;
+    s_smoothedNormalsValid = 0;
+    if (!s_normalSmoothing || body == NULL) {
+        return 0;
+    }
+    if (body->NbPoints <= 0 || body->NbPoints > NORMAL_SMOOTH_MAX_POINTS ||
+        body->NbNormales < body->NbPoints ||
+        body->NbNormales > MAX_NB_POINTS + MAX_NB_POLYS ||
+        body->NbPolys <= 0 || body->NbPolys > NORMAL_SMOOTH_MAX_FACES ||
+        body->OffPolys <= 0 || body->OffLines <= body->OffPolys ||
+        body->OffPoints <= 0 || body->OffNormales <= 0) {
+        return 0;
+    }
+
+    const U8 *cur = (const U8 *)body + body->OffPolys;
+    const U8 *end = (const U8 *)body + body->OffLines;
+    const T_OBJ_POINT *points =
+        (const T_OBJ_POINT *)((const U8 *)body + body->OffPoints);
+    S32 faceCount = 0;
+
+    while (cur < end) {
+        if ((size_t)(end - cur) < sizeof(T_POLY_HEADER)) {
+            return 0;
+        }
+        T_POLY_HEADER header;
+        U32 mask;
+        memcpy(&header, cur, sizeof(header));
+        memcpy(&mask, cur, sizeof(mask));
+        cur += sizeof(T_POLY_HEADER);
+
+        const S32 quad = (mask & MASK_QUADRILATERE) ? 1 : 0;
+        const S32 env = (mask & MASK_ENVIRONMENT) ? 1 : 0;
+        const U8 type = (U8)(header.TypePoly & 0xFF);
+        U32 size;
+        if (env) {
+            size = quad ? sizeof(STRUC_POLY4_ENV) : sizeof(STRUC_POLY3_ENV);
+        } else if (type <= POLY_DITHER_TABLE) {
+            size = quad ? sizeof(STRUC_POLY4_LIGHT)
+                        : sizeof(STRUC_POLY3_LIGHT);
+        } else {
+            size = quad ? sizeof(STRUC_POLY4_TEXTURE)
+                        : sizeof(STRUC_POLY3_TEXTURE);
+        }
+
+        for (S32 i = 0; i < header.NbPoly; i++) {
+            if ((size_t)(end - cur) < size ||
+                faceCount >= NORMAL_SMOOTH_MAX_FACES) {
+                return 0;
+            }
+            U16 p[4];
+            memcpy(p, cur, sizeof(p));
+            T_NORMAL_SMOOTH_FACE *face = &s_smoothFaces[faceCount];
+            face->Count = (U8)(quad ? 4 : 3);
+            for (S32 e = 0; e < face->Count; e++) {
+                if (p[e] >= (U16)body->NbPoints) {
+                    return 0;
+                }
+                face->P[e] = p[e];
+            }
+            face->Group = (U8)points[face->P[0]].Group;
+            faceCount++;
+            cur += size;
+        }
+    }
+
+    if (faceCount == 0) {
+        return 0;
+    }
+    const TYPE_VT16 *authored =
+        (const TYPE_VT16 *)((const U8 *)body + body->OffNormales);
+    if (!NormalSmooth_Build(points, authored, body->NbPoints,
+                            body->NbNormales, s_smoothFaces, faceCount,
+                            s_smoothedNormals)) {
+        return 0;
+    }
+    s_smoothThisBody = 1;
+    s_smoothedNormalsValid = 1;
+    return 1;
+}
+
+/* Matching Gouraud replacement for the flat-shaded polygon types. */
+static S32 SmoothFlatPolyType(S32 type) {
+    switch (type) {
+    case POLY_FLAT:
+        return POLY_GOURAUD;
+    case POLY_TEXTURE_FLAT:
+        return POLY_TEXTURE_GOURAUD;
+    case POLY_TEXTURE_FLAT_INC:
+        return POLY_TEXTURE_GOURAUD_INC;
+    case POLY_TEXTUREZ_FLAT:
+        return POLY_TEXTUREZ_GOURAUD;
+    case POLY_TEXTUREZ_FLAT_INC:
+        return POLY_TEXTUREZ_GOURAUD_INC;
+    default:
+        return type;
+    }
+}
+
 static TYPE_VT32 RotateEnvNormal(const TYPE_VT16 *normal) {
     TYPE_VT32 rotated;
 
@@ -531,6 +779,20 @@ S32 Triangle_Flat(U32 typePoly, void *poly) {
     ListFillPoly[2].Pt_XE = Obj_ListProjectedPoints[poly3->P3].X;
     ListFillPoly[2].Pt_YE = Obj_ListProjectedPoints[poly3->P3].Y;
 
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly3->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly3->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly3->P3];
+
+        DecorVBO_SetNormal(0, poly3->P1);
+        DecorVBO_SetNormal(1, poly3->P2);
+        DecorVBO_SetNormal(2, poly3->P3);
+        DecorVBO_SetFlatColor(poly3->Couleur);
+
+        return Fill_Poly(SmoothFlatPolyType(POLY_FLAT), poly3->Couleur & 0xFF,
+                         3, ListFillPoly);
+    }
+
     U16 normal = ListLights[poly3->Normale] >> 8;
     U8 color = (poly3->Couleur + normal) & 0xFF;
 
@@ -555,6 +817,22 @@ S32 Quad_Flat(U32 typePoly, void *poly) {
     ListFillPoly[2].Pt_YE = Obj_ListProjectedPoints[poly4->P3].Y;
     ListFillPoly[3].Pt_XE = Obj_ListProjectedPoints[poly4->P4].X;
     ListFillPoly[3].Pt_YE = Obj_ListProjectedPoints[poly4->P4].Y;
+
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly4->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly4->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly4->P3];
+        ListFillPoly[3].Pt_Light = ListLights[poly4->P4];
+
+        DecorVBO_SetNormal(0, poly4->P1);
+        DecorVBO_SetNormal(1, poly4->P2);
+        DecorVBO_SetNormal(2, poly4->P3);
+        DecorVBO_SetNormal(3, poly4->P4);
+        DecorVBO_SetFlatColor(poly4->Couleur);
+
+        return Fill_Poly(SmoothFlatPolyType(POLY_FLAT), poly4->Couleur & 0xFF,
+                         4, ListFillPoly);
+    }
 
     U16 normal = ListLights[poly4->Normale] >> 8;
     U8 color = (poly4->Couleur + normal) & 0xFF;
@@ -697,6 +975,20 @@ S32 Triangle_Texture_Flat(U32 typePoly, void *poly) {
     RepMask = textureInfo >> 16;
     PtrMap = ObjPtrMap + (textureInfo & 0xFFFF);
 
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly3->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly3->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly3->P3];
+
+        DecorVBO_SetNormal(0, poly3->P1);
+        DecorVBO_SetNormal(1, poly3->P2);
+        DecorVBO_SetNormal(2, poly3->P3);
+        DecorVBO_SetFlatColor(poly3->Couleur);
+
+        return Fill_Poly(SmoothFlatPolyType(typePoly >> 2), 0, 3,
+                         ListFillPoly);
+    }
+
     U16 normal = ListLights[poly3->Normale] >> 8;
 
     DecorVBO_SetNormal(0, poly3->Normale);
@@ -731,6 +1023,22 @@ S32 Quad_Texture_Flat(U32 typePoly, void *poly) {
     U32 textureInfo = PtrTextures[poly4->HandleText];
     RepMask = textureInfo >> 16;
     PtrMap = ObjPtrMap + (textureInfo & 0xFFFF);
+
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly4->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly4->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly4->P3];
+        ListFillPoly[3].Pt_Light = ListLights[poly4->P4];
+
+        DecorVBO_SetNormal(0, poly4->P1);
+        DecorVBO_SetNormal(1, poly4->P2);
+        DecorVBO_SetNormal(2, poly4->P3);
+        DecorVBO_SetNormal(3, poly4->P4);
+        DecorVBO_SetFlatColor(poly4->Couleur);
+
+        return Fill_Poly(SmoothFlatPolyType(typePoly >> 2), 0, 4,
+                         ListFillPoly);
+    }
 
     U16 normal = ListLights[poly4->Normale] >> 8;
 
@@ -941,6 +1249,14 @@ S32 Triangle_TextureZ_Flat(U32 typePoly, void *poly) {
     ListFillPoly[1].Pt_W = W_NORM / (Obj_ListRotatedPoints[poly3->P2].Z + PosZWr);
     ListFillPoly[2].Pt_W = W_NORM / (Obj_ListRotatedPoints[poly3->P3].Z + PosZWr);
 
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly3->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly3->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly3->P3];
+        return Fill_Poly(SmoothFlatPolyType(typePoly >> 2), 0, 3,
+                         ListFillPoly);
+    }
+
     return Fill_Poly(typePoly >> 2, intensity, 3, ListFillPoly);
 }
 
@@ -975,6 +1291,15 @@ S32 Quad_TextureZ_Flat(U32 typePoly, void *poly) {
     ListFillPoly[1].Pt_W = W_NORM / (Obj_ListRotatedPoints[poly4->P2].Z + PosZWr);
     ListFillPoly[2].Pt_W = W_NORM / (Obj_ListRotatedPoints[poly4->P3].Z + PosZWr);
     ListFillPoly[3].Pt_W = W_NORM / (Obj_ListRotatedPoints[poly4->P4].Z + PosZWr);
+
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly4->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly4->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly4->P3];
+        ListFillPoly[3].Pt_Light = ListLights[poly4->P4];
+        return Fill_Poly(SmoothFlatPolyType(typePoly >> 2), 0, 4,
+                         ListFillPoly);
+    }
 
     return Fill_Poly(typePoly >> 2, intensity, 4, ListFillPoly);
 }
@@ -1155,6 +1480,14 @@ S32 Triangle_EnvTexture_Flat(U32 typePoly, void *poly) {
 
     SetEnvMappedTriangleUvs(ListFillPoly, poly3);
 
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly3->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly3->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly3->P3];
+        return Fill_Poly(SmoothFlatPolyType(typePoly >> 2), 0, 3,
+                         ListFillPoly);
+    }
+
     return Fill_Poly(typePoly >> 2, intensity, 3, ListFillPoly);
 }
 
@@ -1178,6 +1511,15 @@ S32 Quad_EnvTexture_Flat(U32 typePoly, void *poly) {
     PtrMap = ObjPtrMap + (envInfo & 0xFFFF);
 
     SetEnvMappedQuadUvs(ListFillPoly, poly4);
+
+    if (s_smoothThisBody) {
+        ListFillPoly[0].Pt_Light = ListLights[poly4->P1];
+        ListFillPoly[1].Pt_Light = ListLights[poly4->P2];
+        ListFillPoly[2].Pt_Light = ListLights[poly4->P3];
+        ListFillPoly[3].Pt_Light = ListLights[poly4->P4];
+        return Fill_Poly(SmoothFlatPolyType(typePoly >> 2), 0, 4,
+                         ListFillPoly);
+    }
 
     return Fill_Poly(typePoly >> 2, intensity, 4, ListFillPoly);
 }
@@ -1769,6 +2111,7 @@ S32 DecorVBORecord(void *bodyPtr, T_DECORVBO_VERT **outVerts, U32 *outCount) {
     }
 
     lBody = body;
+    BuildBodySmoothNormals(body);
     const TYPE_VT16 *src =
         (const TYPE_VT16 *)((const U8 *)body + body->OffPoints);
     for (S32 i = 0; i < body->NbPoints; i++) {
@@ -1801,6 +2144,8 @@ S32 DecorVBORecord(void *bodyPtr, T_DECORVBO_VERT **outVerts, U32 *outCount) {
     EntityCreation(body);
     PosZWr = savedPosZWr;
     DecorVBOActive = 0;
+    s_smoothThisBody = 0;
+    s_smoothedNormalsValid = 0;
 
     if (DecorVBOUnsupported || s_decorCaptureCount == 0) {
         return 0;
@@ -1898,6 +2243,11 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
     PtrListLightsFaces = ListLights + lBody->NbPoints;
     NbGroupes = lBody->NbGroupes;
 
+    /* One smoothing pass per body; each group then lights the matching slice
+       with its own matrix. */
+    S32 smooth = BuildBodySmoothNormals(lBody);
+    U32 smoothOffset = 0;
+
     PtrGroupes = (T_OBJ_GROUPE *)((U8 *)lBody + lBody->OffGroupes);
     Current_Matrix = TabMat;
 
@@ -1929,8 +2279,14 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
 
     // *** Calculate the intensities ***
 
-    LightList(Current_Matrix, PtrListLights,
-              PtrNormales, groupeNbPts);
+    if (smooth) {
+        LightList(Current_Matrix, PtrListLights,
+                  s_smoothedNormals + smoothOffset, groupeNbPts);
+    } else {
+        LightList(Current_Matrix, PtrListLights,
+                  PtrNormales, groupeNbPts);
+    }
+    smoothOffset += groupeNbPts;
 
     PtrNormales = (TYPE_VT16 *)((U8 *)PtrNormales + groupeNbPts * 8);
     PtrListLights = (PTR_U16)((U8 *)PtrListLights + groupeNbPts * 2);
@@ -1993,8 +2349,14 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
 
         // *** Calculate the intensities ***
 
-        LightList(Current_Matrix, PtrListLights,
-                  PtrNormales, groupeNbPts);
+        if (smooth) {
+            LightList(Current_Matrix, PtrListLights,
+                      s_smoothedNormals + smoothOffset, groupeNbPts);
+        } else {
+            LightList(Current_Matrix, PtrListLights,
+                      PtrNormales, groupeNbPts);
+        }
+        smoothOffset += groupeNbPts;
 
         PtrNormales = (TYPE_VT16 *)((U8 *)PtrNormales + groupeNbPts * 8);
         PtrListLights = (PTR_U16)((U8 *)PtrListLights + groupeNbPts * 2);
@@ -2054,10 +2416,16 @@ S32 Return_BodyDisplay(TYPE_MAT *srcMatrix, TYPE_MAT *dstMatrix, S32 alpha, S32 
 
     // *** Calculate the intensities ***
 
-    TYPE_VT16 *srcLights = (TYPE_VT16 *)((U8 *)body + body->OffNormales);
-    LightList(TabMat, ListLights, srcLights, body->NbNormales);
+    if (BuildBodySmoothNormals(body)) {
+        LightList(TabMat, ListLights, s_smoothedNormals, body->NbNormales);
+    } else {
+        TYPE_VT16 *srcLights =
+            (TYPE_VT16 *)((U8 *)body + body->OffNormales);
+        LightList(TabMat, ListLights, srcLights, body->NbNormales);
+    }
 
-    srcLights = (TYPE_VT16 *)((U8 *)body + body->OffNormFaces);
+    TYPE_VT16 *srcLights =
+        (TYPE_VT16 *)((U8 *)body + body->OffNormFaces);
     LightList(TabMat, ListLights + body->NbNormales,
               srcLights, body->NbNormFaces);
 

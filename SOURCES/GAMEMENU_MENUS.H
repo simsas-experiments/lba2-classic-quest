@@ -133,6 +133,8 @@ static inline void MenuBuildRows(U16 *menu, S32 yCenter, const struct MenuRowDef
 #define MENU_ID_DISPLAY_COLORGRADE 2144
 #define MENU_ID_DISPLAY_SUBPIXEL 2147
 #define MENU_ID_MOVIE_UPSCALE 2149
+#define MENU_ID_DISPLAY_CELLSHADE 2150
+#define MENU_ID_DISPLAY_NORMALSMOOTH 2151
 
 /* Synthetic row types handled by DoGameMenu's slider/cycler branches. */
 #define MENU_TYPE_TEXT_LANGUAGE 8

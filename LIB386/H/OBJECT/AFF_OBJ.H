@@ -2,6 +2,7 @@
 
 #include <SYSTEM/ADELINE_TYPES.H>
 #include <ANIM/LIBINIT.H>
+#include <3D/DATAMAT.H>
 
 // -----------------------------------------------------------------------------
 #ifdef __cplusplus
@@ -126,6 +127,35 @@ typedef struct {
     S32 OffTextures;
 } T_BODY_HEADER;
 #pragma pack(pop)
+
+/* Normal smoothing -----------------------------------------------------------------
+   A body stores one authored normal per point plus a separate list of face
+   normals.  When smoothing is enabled the renderer rebuilds the point normals
+   as an area-weighted average of the adjacent face normals, keeping faces that
+   deviate too far from the authored point normal out of the sum so sharp
+   creases are not dragged across.  Flat-shaded polygons then promote to the
+   matching Gouraud type and light from those smoothed point normals. */
+#define NORMAL_SMOOTH_MAX_POINTS 550
+#define NORMAL_SMOOTH_MAX_FACES 550
+
+typedef struct {
+    U16 P[4];
+    U8 Count; /* 3 or 4 */
+    U8 Group; /* group of P[0]; smoothing never crosses groups */
+} T_NORMAL_SMOOTH_FACE;
+
+/* Rebuild `out` for the first `pointCount` points from `faces`.  Entries
+   [pointCount, authoredCount) are copied from `authored` unchanged.  Returns
+   0 when the input does not fit the fixed scratch limits; callers then keep
+   the authored normals. */
+S32 NormalSmooth_Build(const T_OBJ_POINT *points, const TYPE_VT16 *authored,
+                       S32 pointCount, S32 authoredCount,
+                       const T_NORMAL_SMOOTH_FACE *faces, S32 faceCount,
+                       TYPE_VT16 *out);
+
+/* Set by the GL renderer each frame; the software path leaves this off. */
+void NormalSmooth_SetEnabled(S32 enabled);
+S32 NormalSmooth_Enabled(void);
 
 // -----------------------------------------------------------------------------
 #define TYPE_ROTATE 0

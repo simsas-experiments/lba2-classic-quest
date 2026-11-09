@@ -26,9 +26,10 @@ Main Menu
 │   │   │   ├── Antialias
 │   │   │   ├── Quality [desktop only]
 │   │   │   ├── Detail Level (45) [slider 0–3]
-│   │   │   └── Soft shadows
+│   │   │   ├── Soft shadows
+│   │   │   └── Normal smoothing
 │   │   ├── Image [GL only]: Brightness / Contrast / Saturation [sliders] /
-│   │   │   Colour grade / Dither / Sharpen
+│   │   │   Colour grade / Dither / Sharpen / Cell shading
 │   │   ├── VR [OpenXR only]
 │   │   │   ├── Stereo 3D
 │   │   │   ├── VR zoom
@@ -110,7 +111,7 @@ Flow: `kMainMenuRows` (template) → `BuildGameMainMenu(firstloop)` → `GameMai
 - **Options** (`OptionsMenu`): top-level submenu for Display, Audio, Language, Gameplay, Controls, and Cheats. Reuses original `text.hqr` labels where they already exist and keeps custom localized labels only for the submenu concepts. Calls `GereDisplayMenu()`, `GereVolumeMenu()`, `GereLanguageMenu()`, `GereGameplayMenu()`, `GereControllerMenu()`, and `GereCheatMenu()`. Calls `SetDetailLevel()` on exit.
 - **Audio** (`GereVolumeMenu`): `VolumeMenuVoice` / `VolumeMenuNoVoice` depending on `FlagSpeak`. Sliders for Sample, Voice, Music, and General volume, plus the Reverse stereo channels toggle. Persisted via [CONFIG.md](CONFIG.md).
 - **Language** (`GereLanguageMenu`): cycles text language and voice language independently. Text changes reload `text.hqr` immediately; voice changes update the active `LanguageCD` setting.
-- **Display** (`GereDisplayMenu`): a compact parent page — Resolution, Graphics, Image, VR when an OpenXR session is active, Window, FPS counter, and FPS limit — plus one child page per group. The split keeps every page within the row budget of the 480px canvas. Resolution opens the generated mode list; Graphics (GL) holds Renderer / Filter / Antialias / Quality (desktop only; Android clamps SSAA to Native) / Detail Level / Soft shadows; Image (GL) holds the Brightness / Contrast / Saturation sliders plus Colour grade / Dither / Sharpen; VR (OpenXR) holds Stereo 3D / VR zoom / Supersampling / Interior / Body & hands, with Interior holding Interior hover / Sub-pixel pan / Interior passthrough; Window holds Vsync / Fullscreen. See [RUNTIME_RESOLUTION.md](RUNTIME_RESOLUTION.md) and [GFX_OPTIONS.md](GFX_OPTIONS.md). The image sliders (menu types 10–12) use left/right or the mouse wheel to step the signed -20..+20 value by 1 with the volume sliders' key repeat, draw a zero-centred bar, preview live at composite time, and write lba2.cfg once when the Display menu closes.
+- **Display** (`GereDisplayMenu`): a compact parent page — Resolution, Graphics, Image, VR when an OpenXR session is active, Window, FPS counter, and FPS limit — plus one child page per group. The split keeps every page within the row budget of the 480px canvas. Resolution opens the generated mode list; Graphics (GL) holds Renderer / Filter / Antialias / Quality (desktop only; Android clamps SSAA to Native) / Detail Level / Soft shadows / Normal smoothing; Image (GL) holds the Brightness / Contrast / Saturation sliders plus Colour grade / Dither / Sharpen / Cell shading; VR (OpenXR) holds Stereo 3D / VR zoom / Supersampling / Interior / Body & hands, with Interior holding Interior hover / Sub-pixel pan / Interior passthrough; Window holds Vsync / Fullscreen. See [RUNTIME_RESOLUTION.md](RUNTIME_RESOLUTION.md) and [GFX_OPTIONS.md](GFX_OPTIONS.md). The image sliders (menu types 10–12) use left/right or the mouse wheel to step the signed -20..+20 value by 1 with the volume sliders' key repeat, draw a zero-centred bar, preview live at composite time, and write lba2.cfg once when the Display menu closes.
 - **Gameplay** (`GereGameplayMenu`): the camera setting (Classic camera / Auto camera / First person), movie cameras, video playback size, subtitle display, and the movie upscaler (Nearest / Scale2x / xBR, default xBR). The movie filter is independent of the game texture filter.
 - **Save/Load** (`SavedGameManagement`, `ChoosePlayerName`): Player name selection, save slots, `GameChoiceMenu[]`, `SavedConfirmMenu[]` for delete
 - **Keyboard config** (`MenuConfig`): standalone config tool in [SOURCES/CONFIG/](../SOURCES/CONFIG/) or in-game `ReadInputConfig`/`WriteInputConfig`

@@ -195,7 +195,14 @@ extern "C" S32 DisplayStereo3D;
 extern "C" S32 DisplaySoftShadows;
 extern "C" S32 DisplaySubPixel;
 extern "C" S32 DisplayColorGrade;
+extern "C" S32 DisplayCellShade;
+extern "C" S32 DisplayNormalSmoothing;
 extern "C" S32 FlagMovie; /* full-screen movie: Log index 0 is opaque */
+
+/* Body normal rebuilding lives with the object renderer; the GL path is its
+   only caller, and the software renderer keeps the authored normals. */
+extern "C" void NormalSmooth_SetEnabled(S32 enabled);
+extern "C" S32 NormalSmooth_Enabled(void);
 
 /* Present-side sharpening strength: 0 = off, 1 = low, 2 = high. */
 static float GL_SharpenAmount(void) {
@@ -212,6 +219,9 @@ static float GL_SharpenAmount(void) {
    instead of stepping. */
 static float s_subPixelU = 0.0f;
 static float s_subPixelV = 0.0f;
+/* Set when GL_DrawMovieFrame owns the scene target: the movie is a finished
+   indexed image, so the toon pass must leave it alone for that frame. */
+static S32 s_sceneIsMovie = 0;
 
 void GL_SetSubPixelOffset(float du, float dv) {
     s_subPixelU = du;
@@ -221,19 +231,21 @@ void GL_SetSubPixelOffset(float du, float dv) {
 /* Whether the scene composite currently has work the direct-read fast path
    would skip. */
 static S32 GL_PostFxActive(void) {
-    return DisplayColorGrade != 0 || DisplaySubPixel;
+    return DisplayColorGrade != 0 || DisplaySubPixel ||
+           (DisplayCellShade && !FlagMovie && !s_sceneIsMovie);
 }
 
 /* Upload the scene post-effect uniforms.  `scene` selects the live values;
    every other user of the same present program (the 2D overlay, the terrain
    snapshot and horizon blits) must pass 0, or it inherits the last frame's
-   tint or vignette. */
+   tint, vignette or cel shading. */
 static void GL_UploadPostFx(GLint uGrade, GLint uVignette, GLint uSubPixel,
-                            S32 scene) {
+                            GLint uCellShade, S32 scene) {
     S32 grade = 0;
     float vignette = 0.0f;
     float du = 0.0f;
     float dv = 0.0f;
+    float cell = 0.0f;
 
     if (scene) {
         grade = DisplayColorGrade;
@@ -243,6 +255,10 @@ static void GL_UploadPostFx(GLint uGrade, GLint uVignette, GLint uSubPixel,
             du = s_subPixelU;
             dv = s_subPixelV;
         }
+        /* A movie owns the scene target as a plain indexed image; banding
+           and inking it would read as a broken transfer, not a style. */
+        if (DisplayCellShade && !FlagMovie && !s_sceneIsMovie)
+            cell = 1.0f;
     }
     if (uGrade >= 0)
         glUniform1i(uGrade, grade);
@@ -250,6 +266,8 @@ static void GL_UploadPostFx(GLint uGrade, GLint uVignette, GLint uSubPixel,
         glUniform1f(uVignette, vignette);
     if (uSubPixel >= 0)
         glUniform2f(uSubPixel, du, dv);
+    if (uCellShade >= 0)
+        glUniform1f(uCellShade, cell);
 }
 
 /* Temporary perf instrumentation: draw calls flushed since GL_BeginFrame */
@@ -314,6 +332,30 @@ S32 GL_BatchFlushCount = 0;
     "    return c;\n"                                                     \
     "}\n"
 
+/* Cel shading on the composited scene: four flat luma bands plus ink where a
+   cross of neighbouring luma samples exposes a silhouette.  Each pixel snaps
+   to its band level with the gain clamped, so shadows deepen without crushing
+   and highlights saturate without clipping the whole image.  It samples uTex
+   at uTexel, so only the scene blit may enable it; the 2D overlay and the
+   auxiliary snapshot/horizon blits upload uCellShade = 0. */
+#define GLSL_CELLSHADE                                                           \
+    "uniform float uCellShade;\n"                                                \
+    "vec3 CellShade(vec3 c, vec2 uv) {\n"                                        \
+    "    if (uCellShade < 0.5) return c;\n"                                      \
+    "    vec3 luma = vec3(0.299, 0.587, 0.114);\n"                               \
+    "    float l = dot(c, luma);\n"                                              \
+    "    float band = floor(clamp(l, 0.0, 0.999) * 4.0) / 3.0;\n"                \
+    "    float gain = clamp(band / max(l, 0.02), 0.5, 1.6);\n"                   \
+    "    vec3 flatColor = c * gain;\n"                                           \
+    "    float ln = dot(texture2D(uTex, uv - vec2(0.0, uTexel.y)).rgb, luma);\n" \
+    "    float ls = dot(texture2D(uTex, uv + vec2(0.0, uTexel.y)).rgb, luma);\n" \
+    "    float lw = dot(texture2D(uTex, uv - vec2(uTexel.x, 0.0)).rgb, luma);\n" \
+    "    float le = dot(texture2D(uTex, uv + vec2(uTexel.x, 0.0)).rgb, luma);\n" \
+    "    float edge = max(max(abs(l - ln), abs(l - ls)),\n"                      \
+    "                     max(abs(l - lw), abs(l - le)));\n"                     \
+    "    return flatColor * (1.0 - 0.9 * smoothstep(0.12, 0.30, edge));\n"       \
+    "}\n"
+
 static const char *s_vertSrc =
     GLSL_VERT_HEADER
     "attribute vec2 aPos;\n"
@@ -331,7 +373,7 @@ static const char *s_fragSrc =
     "uniform vec2 uTexScale;\n"  /* 1,1 for a normal blit; 0.5,1 per stereo eye */
     "uniform vec2 uTexOffset;\n" /* eye half offset for the stereo post-Fx pass */
     "uniform float uSharpen;\n"  /* 0 = off, unsharp strength */
-    GLSL_POSTFX
+    GLSL_POSTFX GLSL_CELLSHADE
     "varying vec2 vTexCoord;\n"
     "void main() {\n"
     /* The 2D overlay is a screen-space layer: Scale2x and xBR belong to the
@@ -350,7 +392,7 @@ static const char *s_fragSrc =
     "        vec3 sblur = (sn + ss + sw + se) * 0.25;\n"
     "        sharpened = result.rgb + (result.rgb - sblur) * uSharpen;\n"
     "    }\n"
-    "    gl_FragColor = vec4(ImageAdjust(PostFx(sharpened, vTexCoord)), result.a);\n"
+    "    gl_FragColor = vec4(ImageAdjust(PostFx(CellShade(sharpened, uv), vTexCoord)), result.a);\n"
     "}\n";
 
 /* ── CLUT shader (3D Gouraud-textured polygons) ─────────────────────────── */
@@ -1371,6 +1413,7 @@ static GLint s_uSharpenLoc = -1;
 static GLint s_uGradeLoc = -1;
 static GLint s_uVignetteLoc = -1;
 static GLint s_uSubPixelLoc = -1;
+static GLint s_uCellShadeLoc = -1;
 static GLint s_aPosLoc = -1;
 static GLint s_aTexCoordLoc = -1;
 static U32 s_texWidth = 0;
@@ -1489,7 +1532,7 @@ static const char *s_fxaaFragSrc =
     GLSL_FRAG_HEADER GLSL_IMAGE_ADJUST
     "uniform sampler2D uTex;\n"
     "uniform vec2 uTexel;\n"
-    "uniform float uSharpen;\n" GLSL_POSTFX
+    "uniform float uSharpen;\n" GLSL_POSTFX GLSL_CELLSHADE
     "varying vec2 vTexCoord;\n"
     /* Unsharp mask from the FXAA corner taps; applied after the edge blend so
        sharpening and FXAA can be used together. */
@@ -1512,29 +1555,29 @@ static const char *s_fxaaFragSrc =
     "    float lumaM  = dot(rgbM, luma);\n"
     "    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));\n"
     "    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));\n"
+    "    vec3 rgb;\n"
     "    if (lumaMax - lumaMin <= 0.08) {\n"
-    "        gl_FragColor = vec4(ImageAdjust(PostFx(SharpenColor(\n"
-    "            rgbM, rgbNW, rgbNE, rgbSW, rgbSE), vTexCoord)), 1.0);\n"
-    "        return;\n"
+    "        rgb = SharpenColor(rgbM, rgbNW, rgbNE, rgbSW, rgbSE);\n"
+    "    } else {\n"
+    "        vec2 dir = vec2(-((lumaNW + lumaNE) - (lumaSW + lumaSE)),\n"
+    "                        ((lumaNW + lumaSW) - (lumaNE + lumaSE)));\n"
+    "        float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);\n"
+    "        float rcpMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+    "        dir = clamp(dir * rcpMin, vec2(-8.0), vec2(8.0)) * uTexel;\n"
+    "        vec3 rgbA = 0.5 * (\n"
+    "            texture2D(uTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
+    "            texture2D(uTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
+    "        vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
+    "            texture2D(uTex, uv + dir * -0.5).rgb +\n"
+    "            texture2D(uTex, uv + dir * 0.5).rgb);\n"
+    "        float lumaB = dot(rgbB, luma);\n"
+    "        if (lumaB < lumaMin || lumaB > lumaMax)\n"
+    "            rgb = SharpenColor(rgbA, rgbNW, rgbNE, rgbSW, rgbSE);\n"
+    "        else\n"
+    "            rgb = SharpenColor(rgbB, rgbNW, rgbNE, rgbSW, rgbSE);\n"
     "    }\n"
-    "    vec2 dir = vec2(-((lumaNW + lumaNE) - (lumaSW + lumaSE)),\n"
-    "                    ((lumaNW + lumaSW) - (lumaNE + lumaSE)));\n"
-    "    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);\n"
-    "    float rcpMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
-    "    dir = clamp(dir * rcpMin, vec2(-8.0), vec2(8.0)) * uTexel;\n"
-    "    vec3 rgbA = 0.5 * (\n"
-    "        texture2D(uTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
-    "        texture2D(uTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
-    "    vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
-    "        texture2D(uTex, uv + dir * -0.5).rgb +\n"
-    "        texture2D(uTex, uv + dir * 0.5).rgb);\n"
-    "    float lumaB = dot(rgbB, luma);\n"
-    "    if (lumaB < lumaMin || lumaB > lumaMax)\n"
-    "        gl_FragColor = vec4(ImageAdjust(PostFx(SharpenColor(\n"
-    "            rgbA, rgbNW, rgbNE, rgbSW, rgbSE), vTexCoord)), 1.0);\n"
-    "    else\n"
-    "        gl_FragColor = vec4(ImageAdjust(PostFx(SharpenColor(\n"
-    "            rgbB, rgbNW, rgbNE, rgbSW, rgbSE), vTexCoord)), 1.0);\n"
+    "    gl_FragColor =\n"
+    "        vec4(ImageAdjust(PostFx(CellShade(rgb, uv), vTexCoord)), 1.0);\n"
     "}\n";
 
 static GLuint s_fxaaProgram = 0;
@@ -1544,6 +1587,7 @@ static GLint s_fxaa_uSharpen = -1;
 static GLint s_fxaa_uGrade = -1;
 static GLint s_fxaa_uVignette = -1;
 static GLint s_fxaa_uSubPixel = -1;
+static GLint s_fxaa_uCellShade = -1;
 static GLint s_fxaa_aPos = -1;
 static GLint s_fxaa_aTexCoord = -1;
 
@@ -3596,7 +3640,7 @@ S32 GL_BlitStereoPairToCurrent(U32 srcWidth, U32 srcHeight, U32 dstWidth,
                 1.0f / (GLfloat)srcHeight);
     glUniform1i(s_uFilterLoc, exact ? 0 : 1);
     glUniform1f(s_uSharpenLoc, 0.0f);
-    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 0);
+    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 0);
 
     GL_SetDepthTest(0);
     GL_SetBlendFunc(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3656,7 +3700,7 @@ S32 GL_BlitStereoRectToCurrent(U32 srcX, U32 srcY, U32 srcWidth, U32 srcHeight,
                 1.0f / (GLfloat)texHeight);
     glUniform1i(s_uFilterLoc, exact ? 0 : 1);
     glUniform1f(s_uSharpenLoc, 0.0f);
-    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 0);
+    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 0);
 
     GL_SetDepthTest(0);
     GL_SetBlendFunc(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3948,6 +3992,7 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
     s_uGradeLoc = glGetUniformLocation(s_program, "uGrade");
     s_uVignetteLoc = glGetUniformLocation(s_program, "uVignette");
     s_uSubPixelLoc = glGetUniformLocation(s_program, "uSubPixel");
+    s_uCellShadeLoc = glGetUniformLocation(s_program, "uCellShade");
     s_adj_uBrightness = glGetUniformLocation(s_program, "uBrightness");
     s_adj_uContrast = glGetUniformLocation(s_program, "uContrast");
     s_adj_uSaturation = glGetUniformLocation(s_program, "uSaturation");
@@ -4475,6 +4520,7 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             s_fxaa_uGrade = glGetUniformLocation(s_fxaaProgram, "uGrade");
             s_fxaa_uVignette = glGetUniformLocation(s_fxaaProgram, "uVignette");
             s_fxaa_uSubPixel = glGetUniformLocation(s_fxaaProgram, "uSubPixel");
+            s_fxaa_uCellShade = glGetUniformLocation(s_fxaaProgram, "uCellShade");
             s_fxaaAdj_uBrightness = glGetUniformLocation(s_fxaaProgram, "uBrightness");
             s_fxaaAdj_uContrast = glGetUniformLocation(s_fxaaProgram, "uContrast");
             s_fxaaAdj_uSaturation = glGetUniformLocation(s_fxaaProgram, "uSaturation");
@@ -4632,6 +4678,7 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
     s_texWidth = resX;
     s_texHeight = resY;
     s_initialized = 1;
+    NormalSmooth_SetEnabled(DisplayNormalSmoothing);
     GL_InvalidateGLState();
     /* Apply the configured anti-alias mode: the menu re-applies on change,
        but at boot nothing else did, so the cfg value was silently dead and
@@ -4687,6 +4734,7 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
 }
 
 void GL_Renderer_Shutdown(void) {
+    NormalSmooth_SetEnabled(0);
     if (!s_initialized) {
         return;
     }
@@ -6572,7 +6620,11 @@ S32 GL_DecorGPUActive(void) {
     return (s_initialized && s_decorProgram != 0 && s_fbo != 0) ? 1 : 0;
 }
 
-U32 GL_DecorVBOEpoch(void) { return s_terrainEpoch; }
+U32 GL_DecorVBOEpoch(void) {
+    /* Smoothing changes the normals baked into every decor VBO, so fold the
+       toggle into the cache key and let the owner rebuild on change. */
+    return s_terrainEpoch * 2u + (NormalSmooth_Enabled() ? 1u : 0u);
+}
 
 U32 GL_CreateDecorVBO(const T_GL_DecorVertex *verts, U32 vertexCount) {
     if (!s_initialized || verts == NULL || vertexCount == 0) {
@@ -8149,7 +8201,7 @@ void GL_RestoreTerrainSnapshot(void) {
         glUniform1i(s_uTexLoc, 0);
         glUniform1i(s_uFilterLoc, 1);
         glUniform1f(s_uSharpenLoc, 0.0f);
-        GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 0);
+        GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 0);
         GL_BindTexUnit(0, s_snapshotTex);
         GL_BindArrayBuffer(s_auxVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(rverts), rverts, GL_STREAM_DRAW);
@@ -8533,7 +8585,7 @@ void GL_RestoreHorizon(void) {
         glUniform1i(s_uTexLoc, 0);
         glUniform1i(s_uFilterLoc, 1);
         glUniform1f(s_uSharpenLoc, 0.0f);
-        GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 0);
+        GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 0);
         GL_BindTexUnit(0, s_horizonTex);
         GL_BindArrayBuffer(s_auxVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(rverts), rverts, GL_STREAM_DRAW);
@@ -8630,9 +8682,15 @@ void GL_BeginFrame(void) {
        3 xBR rules — the last two are per-texture edge-directed sampling. */
     s_bilinearCLUT = DisplayTexFilter;
 
+    /* The object renderer shares the authored-normal path with software; the
+       GL frame turns the smoothed path on at the same point it reads the
+       other display options. */
+    NormalSmooth_SetEnabled(DisplayNormalSmoothing);
+
     s_frameSeq++;
     GL_BatchFlushCount = 0;
     s_terrainRenderedThisFrame = 0;
+    s_sceneIsMovie = 0;
     s_horizonValid = 0; /* horizon capture is per-frame (eye 0 only) */
 
     if (s_fakeStereoPx > 0 && s_singlePassStereo) {
@@ -9559,6 +9617,7 @@ void GL_DrawMovieFrame(const void *pixels, S32 w, S32 h, S32 filter,
        and let the black show through rather than painting the key colour. */
     GL_DrawIndexedLayerScaled(0, pixels, w, h, s_movieGen, filter,
                               0, 0, w, h, x0, y0, x1, y1, 1);
+    s_sceneIsMovie = 1;
 }
 
 void GL_ReadbackColorBuffer(void) {
@@ -9834,8 +9893,8 @@ static void GL_DrawArgbOverlay(const void *argbPixels, U32 pitch, U32 width,
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, s_texture);
     glUniform1i(s_uTexLoc, 0);
-    glUniform1f(s_uSharpenLoc, 0.0f);                                /* never sharpen the 2D overlay */
-    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 0); /* nor offset it */
+    glUniform1f(s_uSharpenLoc, 0.0f);                                                 /* never sharpen the 2D overlay */
+    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 0); /* nor offset it */
     if (s_overlayImageAdjust) {
         GL_UploadImageAdjust(s_adj_uBrightness, s_adj_uContrast,
                              s_adj_uSaturation);
@@ -9896,7 +9955,7 @@ static S32 GL_ApplyStereoPostFx(void) {
     glUniform1f(s_adj_uBrightness, 0.0f);
     glUniform1f(s_adj_uContrast, 1.0f);
     glUniform1f(s_adj_uSaturation, 1.0f);
-    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 1);
+    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 1);
 
     GL_BindArrayBuffer(s_fboVbo);
     glEnableVertexAttribArray(s_aPosLoc);
@@ -9925,7 +9984,7 @@ static S32 GL_ApplyStereoPostFx(void) {
     glUniform2f(s_uTexScaleLoc, 1.0f, 1.0f);
     glUniform2f(s_uTexOffsetLoc, 0.0f, 0.0f);
     glUniform1f(s_uSharpenLoc, 0.0f);
-    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 0);
+    GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 0);
     s_stereoPostFxActive = 1;
     return 1;
 }
@@ -10127,7 +10186,7 @@ void GL_Present(const void *argbPixels, U32 pitch, U32 width, U32 height,
             glUniform2f(s_fxaa_uTexel, 1.0f / (GLfloat)s_texWidth,
                         1.0f / (GLfloat)s_texHeight);
             glUniform1f(s_fxaa_uSharpen, GL_SharpenAmount());
-            GL_UploadPostFx(s_fxaa_uGrade, s_fxaa_uVignette, s_fxaa_uSubPixel, 1);
+            GL_UploadPostFx(s_fxaa_uGrade, s_fxaa_uVignette, s_fxaa_uSubPixel, s_fxaa_uCellShade, 1);
             GL_UploadImageAdjust(s_fxaaAdj_uBrightness, s_fxaaAdj_uContrast,
                                  s_fxaaAdj_uSaturation);
             glEnableVertexAttribArray(s_fxaa_aPos);
@@ -10143,6 +10202,10 @@ void GL_Present(const void *argbPixels, U32 pitch, U32 width, U32 height,
         } else {
             glUseProgram(s_program);
             glUniform1i(s_uTexLoc, 0);
+            /* Scene texel size for the sharpen and CellShade neighbour taps;
+               the overlay pass uploads its own uTexel before drawing. */
+            glUniform2f(s_uTexelLoc, 1.0f / (GLfloat)s_sceneTargetW,
+                        1.0f / (GLfloat)s_sceneTargetH);
             /* The hi-res FBO is always drawn plainly; the Scale2x mode below is
          * for the 640x480 overlay only.  Pin it here or a stale Scale2x from
          * the previous frame's overlay draw would smear the FBO blit. */
@@ -10150,7 +10213,7 @@ void GL_Present(const void *argbPixels, U32 pitch, U32 width, U32 height,
                                  s_adj_uSaturation);
             glUniform1i(s_uFilterLoc, 1);
             glUniform1f(s_uSharpenLoc, GL_SharpenAmount());
-            GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 1);
+            GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 1);
             glEnableVertexAttribArray(s_aPosLoc);
             glVertexAttribPointer(s_aPosLoc, 2, GL_FLOAT, GL_FALSE,
                                   4 * sizeof(GLfloat), (const void *)0);
@@ -10922,7 +10985,7 @@ void GL_PresentIndexed(const U8 *indices, U32 pitch, U32 width, U32 height,
             glUniform2f(s_fxaa_uTexel, 1.0f / (GLfloat)s_texWidth,
                         1.0f / (GLfloat)s_texHeight);
             glUniform1f(s_fxaa_uSharpen, GL_SharpenAmount());
-            GL_UploadPostFx(s_fxaa_uGrade, s_fxaa_uVignette, s_fxaa_uSubPixel, 1);
+            GL_UploadPostFx(s_fxaa_uGrade, s_fxaa_uVignette, s_fxaa_uSubPixel, s_fxaa_uCellShade, 1);
             GL_UploadImageAdjust(s_fxaaAdj_uBrightness, s_fxaaAdj_uContrast,
                                  s_fxaaAdj_uSaturation);
             glEnableVertexAttribArray(s_fxaa_aPos);
@@ -10938,6 +11001,10 @@ void GL_PresentIndexed(const U8 *indices, U32 pitch, U32 width, U32 height,
         } else {
             glUseProgram(s_program);
             glUniform1i(s_uTexLoc, 0);
+            /* Scene texel size for the sharpen and CellShade neighbour taps;
+               the overlay pass uploads its own uTexel before drawing. */
+            glUniform2f(s_uTexelLoc, 1.0f / (GLfloat)s_sceneTargetW,
+                        1.0f / (GLfloat)s_sceneTargetH);
             /* The hi-res FBO is always drawn plainly; the Scale2x mode below is
          * for the 640x480 overlay only.  Pin it here or a stale Scale2x from
          * the previous frame's overlay draw would smear the FBO blit. */
@@ -10945,7 +11012,7 @@ void GL_PresentIndexed(const U8 *indices, U32 pitch, U32 width, U32 height,
                                  s_adj_uSaturation);
             glUniform1i(s_uFilterLoc, 1);
             glUniform1f(s_uSharpenLoc, GL_SharpenAmount());
-            GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, 1);
+            GL_UploadPostFx(s_uGradeLoc, s_uVignetteLoc, s_uSubPixelLoc, s_uCellShadeLoc, 1);
             glEnableVertexAttribArray(s_aPosLoc);
             glVertexAttribPointer(s_aPosLoc, 2, GL_FLOAT, GL_FALSE,
                                   4 * sizeof(GLfloat), (const void *)0);

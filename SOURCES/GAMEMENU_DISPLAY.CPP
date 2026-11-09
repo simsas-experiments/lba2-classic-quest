@@ -99,6 +99,7 @@ static void BuildDisplayGraphicsMenu(void) {
 #endif
     MenuSetRow(DisplayGraphicsMenu, n++, 7, MENU_ID_DETAIL_LEVEL);
     MenuSetRow(DisplayGraphicsMenu, n++, 0, MENU_ID_DISPLAY_SOFTSHADOWS);
+    MenuSetRow(DisplayGraphicsMenu, n++, 0, MENU_ID_DISPLAY_NORMALSMOOTH);
     MenuSetCount(DisplayGraphicsMenu, n);
 }
 
@@ -115,6 +116,7 @@ static void BuildDisplayImageMenu(void) {
     MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_COLORGRADE);
     MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_DITHER);
     MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_SHARPEN);
+    MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_CELLSHADE);
     MenuSetCount(DisplayImageMenu, n);
 }
 
@@ -490,6 +492,11 @@ static void DisplayMenuApplyChoice(S32 select) {
         WriteConfigFile();
         break;
 
+    case MENU_ID_DISPLAY_NORMALSMOOTH:
+        DisplayNormalSmoothing ^= 1;
+        WriteConfigFile();
+        break;
+
     case MENU_ID_DISPLAY_COLORGRADE:
         DisplayColorGrade = (DisplayColorGrade + 1) % 3;
         WriteConfigFile();
@@ -502,6 +509,11 @@ static void DisplayMenuApplyChoice(S32 select) {
 
     case MENU_ID_DISPLAY_SHARPEN:
         DisplaySharpen = (DisplaySharpen + 1) % 3;
+        WriteConfigFile();
+        break;
+
+    case MENU_ID_DISPLAY_CELLSHADE:
+        DisplayCellShade ^= 1;
         WriteConfigFile();
         break;
 
