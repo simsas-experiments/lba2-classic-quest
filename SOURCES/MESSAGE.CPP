@@ -2361,11 +2361,6 @@ void Dial(S32 text, S32 drawscene) {
                     SpeakAnimation();
                 }
 
-            /* A page turn skips the rest of the page's voice too.  The demo
-               timer is not a player skip, so it leaves the voice alone. */
-            if (!DemoSlide)
-                Dial_SkipVoicePage();
-
             DialNbLine = 0;
         }
 

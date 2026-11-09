@@ -1843,7 +1843,6 @@ void DoFoundObj(S32 numvar) {
                 DialNbLine = 0;
                 dialstat = 1; // continue
                 keyreleased = FALSE;
-                Dial_SkipVoicePage();
             }
         }
     }
