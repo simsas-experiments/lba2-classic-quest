@@ -289,11 +289,6 @@ static void BuildCustomMenuText(S32 num, char *string) {
                                        : "Off");
         break;
 
-    case MENU_ID_DISPLAY_CELLSHADE:
-        snprintf(string, 256, "Cell shading: %s",
-                 DisplayCellShade ? "On" : "Off");
-        break;
-
     case MENU_ID_DISPLAY_STEREO3D:
         CopyUtf8ToCp850(string, 256, GetLocalizedMenuLabel(DisplayStereo3D ? MENU_LABEL_STEREO3D_ON : MENU_LABEL_STEREO3D_OFF));
         break;

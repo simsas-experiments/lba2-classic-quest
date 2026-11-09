@@ -116,7 +116,6 @@ static void BuildDisplayImageMenu(void) {
     MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_COLORGRADE);
     MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_DITHER);
     MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_SHARPEN);
-    MenuSetRow(DisplayImageMenu, n++, 0, MENU_ID_DISPLAY_CELLSHADE);
     MenuSetCount(DisplayImageMenu, n);
 }
 
@@ -509,11 +508,6 @@ static void DisplayMenuApplyChoice(S32 select) {
 
     case MENU_ID_DISPLAY_SHARPEN:
         DisplaySharpen = (DisplaySharpen + 1) % 3;
-        WriteConfigFile();
-        break;
-
-    case MENU_ID_DISPLAY_CELLSHADE:
-        DisplayCellShade ^= 1;
         WriteConfigFile();
         break;
 

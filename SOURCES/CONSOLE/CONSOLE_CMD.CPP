@@ -2104,8 +2104,6 @@ void Console_RegisterAll(void) {
                          "Sub-pixel interior pan (GL)");
     Console_RegisterCvar("sharpen", &DisplaySharpen, CONSOLE_CVAR_INT,
                          "Present sharpening: 0=off 1=low 2=high (GL)");
-    Console_RegisterCvar("cellshade", &DisplayCellShade, CONSOLE_CVAR_BOOL,
-                         "Cell shading: banded lighting and ink outlines (GL)");
     Console_RegisterCvar("smoothnormals", &DisplayNormalSmoothing,
                          CONSOLE_CVAR_BOOL,
                          "Smooth vertex normals and Gouraud flat faces (GL)");

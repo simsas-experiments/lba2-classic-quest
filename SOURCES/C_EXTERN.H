@@ -130,7 +130,6 @@ extern S32 DisplayAntiAlias;       ///< 0 = off, 1 = FXAA, 2 = MSAA×2, 3 = MSAA
 extern S32 DisplayDither;          ///< 1 = ordered dither between CLUT rows (GL mode only)
 extern S32 DisplaySoftShadows;     ///< 1 = feathered ground shadows (GL mode only)
 extern S32 DisplayColorGrade;      ///< 0 = off, 1 = warm, 2 = cool scene grading (GL mode only)
-extern S32 DisplayCellShade;       ///< 1 = banded lighting and ink outlines (GL mode only)
 extern S32 DisplayNormalSmoothing; ///< 1 = averaged vertex normals and flat-to-Gouraud (GL mode only)
 extern S32 DisplaySubPixel;        ///< 1 = sub-pixel interior pan (GL mode only)
 extern S32 DisplaySharpen;         ///< 0 = off, 1 = low, 2 = high present sharpening (GL mode only)
