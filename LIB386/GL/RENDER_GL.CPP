@@ -3314,7 +3314,8 @@ static GLuint CompileShader(GLenum type, const char *src) {
     return shader;
 }
 
-static GLuint LinkProgram(GLuint vert, GLuint frag) {
+static GLuint LinkProgramAttribs(GLuint vert, GLuint frag,
+                                 const char *const *names, S32 count) {
     if (vert == 0 || frag == 0) {
         /* Attaching 0 fails silently per-shader and Mesa links the rest
            (e.g. a vertex-only program that rasterizes nothing) — fail
@@ -3327,6 +3328,12 @@ static GLuint LinkProgram(GLuint vert, GLuint frag) {
     }
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
+    /* Attribute locations belong to the program, and must be bound before
+       linking.  Binding them on a shader object is GL_INVALID_OPERATION and
+       lets the driver choose the layout instead. */
+    for (S32 i = 0; i < count; i++) {
+        glBindAttribLocation(prog, i, names[i]);
+    }
     glLinkProgram(prog);
 
     GLint ok = 0;
@@ -3336,6 +3343,10 @@ static GLuint LinkProgram(GLuint vert, GLuint frag) {
         return 0;
     }
     return prog;
+}
+
+static GLuint LinkProgram(GLuint vert, GLuint frag) {
+    return LinkProgramAttribs(vert, frag, NULL, 0);
 }
 
 /* ── FBO helpers (SSAA) ──────────────────────────────────────────────────── */
@@ -3961,9 +3972,9 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
         GLuint dzFrag =
             CompileShader(GL_FRAGMENT_SHADER, dzFragSrc);
         if (dzVert != 0 && dzFrag != 0) {
-            glBindAttribLocation(dzVert, 0, "aPos");
-            glBindAttribLocation(dzVert, 1, "aTexCoord");
-            s_depthRestoreProgram = LinkProgram(dzVert, dzFrag);
+            static const char *dzNames[2] = {"aPos", "aTexCoord"};
+            s_depthRestoreProgram =
+                LinkProgramAttribs(dzVert, dzFrag, dzNames, 2);
         }
         glDeleteShader(dzVert);
         glDeleteShader(dzFrag);
@@ -4047,15 +4058,10 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
 
     /* Same attribute layout for both programs: explicit binding indices so
        one vertex-array spec serves the legacy and array variants. */
-    {
-        static const char *names[6] = {"aPos", "aTexCoord", "aLight",
+    static const char *clutNames[6] = {"aPos", "aTexCoord", "aLight",
                                        "aZ", "aRepMask", "aMaterial"};
-        for (S32 i = 0; i < 6; i++) {
-            glBindAttribLocation(clutVert, i, names[i]);
-        }
-    }
 
-    s_clutProgram = LinkProgram(clutVert, clutFrag);
+    s_clutProgram = LinkProgramAttribs(clutVert, clutFrag, clutNames, 6);
     glDeleteShader(clutVert);
     glDeleteShader(clutFrag);
     if (s_clutProgram == 0) {
@@ -4121,10 +4127,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
         if (vert3 != NULL && frag3 != NULL) {
             v3 = CompileShader(GL_VERTEX_SHADER, vert3);
             f3 = CompileShader(GL_FRAGMENT_SHADER, frag3);
-            for (S32 i = 0; i < 6; i++) {
-                glBindAttribLocation(v3, i, attrNames[i]);
-            }
-            s_clut3Program = LinkProgram(v3, f3);
+            s_clut3Program =
+                LinkProgramAttribs(v3, f3, attrNames, 6);
         }
         free(vert3);
         free(frag3);
@@ -4217,10 +4221,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             tv = CompileShader(GL_VERTEX_SHADER, vert3);
             tf = CompileShader(GL_FRAGMENT_SHADER, frag3);
             if (tv != 0 && tf != 0) {
-                for (S32 i = 0; i < 6; i++) {
-                    glBindAttribLocation(tv, i, attrNames[i]);
-                }
-                s_terrainProgram = LinkProgram(tv, tf);
+                s_terrainProgram =
+                    LinkProgramAttribs(tv, tf, attrNames, 6);
             }
         }
         free(vert3);
@@ -4232,10 +4234,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             tv = CompileShader(GL_VERTEX_SHADER, s_terrainVertSrc);
             tf = CompileShader(GL_FRAGMENT_SHADER, s_clutFragSrc);
             if (tv != 0 && tf != 0) {
-                for (S32 i = 0; i < 6; i++) {
-                    glBindAttribLocation(tv, i, attrNames[i]);
-                }
-                s_terrainProgram = LinkProgram(tv, tf);
+                s_terrainProgram =
+                    LinkProgramAttribs(tv, tf, attrNames, 6);
             }
             glDeleteShader(tv);
             glDeleteShader(tf);
@@ -4337,10 +4337,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
         if (v3 != NULL && f3 != NULL) {
             dv = CompileShader(GL_VERTEX_SHADER, v3);
             df = CompileShader(GL_FRAGMENT_SHADER, f3);
-            for (S32 i = 0; i < 6; i++) {
-                glBindAttribLocation(dv, i, attrNames[i]);
-            }
-            s_decorProgram = LinkProgram(dv, df);
+            s_decorProgram =
+                LinkProgramAttribs(dv, df, attrNames, 6);
         }
         free(v3);
         free(f3);
@@ -4433,10 +4431,9 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             lf = CompileShader(GL_FRAGMENT_SHADER, layerFrag);
         }
         if (lv != 0 && lf != 0) {
-            glBindAttribLocation(lv, 0, "aPos");
-            glBindAttribLocation(lv, 1, "aUV");
-            glBindAttribLocation(lv, 2, "aMaterial");
-            s_layerProgram = LinkProgram(lv, lf);
+            static const char *layerNames[3] = {"aPos", "aUV", "aMaterial"};
+            s_layerProgram =
+                LinkProgramAttribs(lv, lf, layerNames, 3);
         }
         free(layerFrag);
         glDeleteShader(lv);
