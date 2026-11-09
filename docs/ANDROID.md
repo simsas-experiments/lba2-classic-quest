@@ -325,7 +325,8 @@ instead:
   compared with the clipped, per-eye one.
 - `LBA2_FAKE_VR_DIALOG=1` takes the head-mount dialogue layout (strip lifted
   above the eye's lower periphery), so the dialogue box can be reviewed over
-  the room rather than over the desktop letterbox.
+  the room rather than over the desktop letterbox. The strip keeps the
+  authored 129 px height so all three 38 px text lines fit.
 
 Repro: `LBA2_FAKE_STEREO=30 LBA2_FAKE_VR_DIALOG=1 xvfb-run -a lba2cc
 --no-autosave --load <save> --exec-at 2 "cube 15" --exec-at 4 "teleport 25856

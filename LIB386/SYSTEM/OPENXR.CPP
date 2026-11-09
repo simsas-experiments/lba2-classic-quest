@@ -1373,10 +1373,40 @@ static S32 OpenXR_CreateActions(void) {
 }
 
 /* -------------------------------------------------------------------------- */
+#ifdef __ANDROID__
+/* The game reads these values every frame through JOYSTICK.CPP. A session
+   that is not focused delivers no input, so leaving the last synced values in
+   place would make a button held across the focus loss look stuck when the
+   session comes back. */
+static void OpenXR_ClearPublishedInput(void) {
+    OpenXR_LeftGripDown = 0;
+    OpenXR_RightGripDown = 0;
+    OpenXR_LeftTrigger = 0;
+    OpenXR_RightTrigger = 0;
+    OpenXR_LeftThumbstickDown = 0;
+    OpenXR_RightThumbstickDown = 0;
+    OpenXR_LeftThumbstickTouched = 0;
+    OpenXR_LeftThumbrestTouched = 0;
+    OpenXR_RightThumbrestTouched = 0;
+    OpenXR_LeftStickX = 0;
+    OpenXR_LeftStickY = 0;
+    OpenXR_RightStickX = 0;
+    OpenXR_RightStickY = 0;
+    OpenXR_ABtn = 0;
+    OpenXR_BBtn = 0;
+    OpenXR_XBtn = 0;
+    OpenXR_YBtn = 0;
+    OpenXR_MenuBtn = 0;
+}
+#endif
+
+/* -------------------------------------------------------------------------- */
 static void OpenXR_ReadActions(void) {
 #ifdef __ANDROID__
-    if (!s_openxrActive)
+    if (!s_openxrActive) {
+        OpenXR_ClearPublishedInput();
         return;
+    }
     /* Per the OpenXR spec, xrSyncActions takes an XrActionsSyncInfo* which
      * describes which action sets to sync. Passing NULL is only valid when
      * there are no active action sets, and the Meta Quest runtime crashes
@@ -1386,8 +1416,10 @@ static void OpenXR_ReadActions(void) {
      * syncInput(): one active action set, no subaction path filter, and
      * skip the call entirely when the session is not focused (the runtime
      * is not in a state to deliver input). */
-    if (s_sessionState != XR_SESSION_STATE_FOCUSED)
+    if (s_sessionState != XR_SESSION_STATE_FOCUSED) {
+        OpenXR_ClearPublishedInput();
         return;
+    }
 
     XrActiveActionSet active;
     memset(&active, 0, sizeof(active));
@@ -1400,8 +1432,10 @@ static void OpenXR_ReadActions(void) {
     syncInfo.activeActionSets = &active;
 
     XrResult rc = xrSyncActions(s_session, &syncInfo);
-    if (XR_FAILED(rc))
+    if (XR_FAILED(rc)) {
+        OpenXR_ClearPublishedInput();
         return;
+    }
 
     XrActionStateGetInfo gi;
     XrActionStateBoolean stb;

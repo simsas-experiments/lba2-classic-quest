@@ -184,6 +184,11 @@ static void BuildCustomMenuText(S32 num, char *string) {
                  DisplaySoftShadows ? "On" : "Off");
         break;
 
+    case MENU_ID_DISPLAY_NORMALSMOOTH:
+        snprintf(string, 256, "Normal smoothing: %s",
+                 DisplayNormalSmoothing ? "On" : "Off");
+        break;
+
     case MENU_ID_DISPLAY_COLORGRADE:
         snprintf(string, 256, "Colour grade: %s",
                  DisplayColorGrade == 1   ? "Warm"

@@ -99,6 +99,7 @@ static void BuildDisplayGraphicsMenu(void) {
 #endif
     MenuSetRow(DisplayGraphicsMenu, n++, 7, MENU_ID_DETAIL_LEVEL);
     MenuSetRow(DisplayGraphicsMenu, n++, 0, MENU_ID_DISPLAY_SOFTSHADOWS);
+    MenuSetRow(DisplayGraphicsMenu, n++, 0, MENU_ID_DISPLAY_NORMALSMOOTH);
     MenuSetCount(DisplayGraphicsMenu, n);
 }
 
@@ -487,6 +488,11 @@ static void DisplayMenuApplyChoice(S32 select) {
 
     case MENU_ID_DISPLAY_SOFTSHADOWS:
         DisplaySoftShadows ^= 1;
+        WriteConfigFile();
+        break;
+
+    case MENU_ID_DISPLAY_NORMALSMOOTH:
+        DisplayNormalSmoothing ^= 1;
         WriteConfigFile();
         break;
 

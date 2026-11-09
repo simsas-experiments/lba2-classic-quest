@@ -55,9 +55,6 @@ S32 FlagRestoreCD = 0;
 S32 FlagDial = DIAL_DEF;
 
 S32 FlagSpeedMessage = FALSE; // cf MyDial() and NextDialCar()
-/* Quest A acts like ESC: edge-triggered so the press that opens the
-   dialogue does not immediately abort it. */
-static S32 s_dialAPrev = 0;
 
 S32 DialNbLine; // pour la version demo le 02/08/96
 
@@ -1317,7 +1314,10 @@ void NormalWinDial() {
        LBA2_FAKE_VR_DIALOG lets a desktop build review that framing. */
     if (OpenXR_GetSwapchainWidth() || getenv("LBA2_FAKE_VR_DIALOG") != NULL) {
         Dial_Y1 = (S32)ModeDesiredY * 3 / 4;
-        Dial_Y0 = Dial_Y1 - 112;
+        /* Keep the authored 129 px strip: three 38 px lines plus the 8 px
+           top inset need more than the 112 px panel used before, which cut
+           the third line off at the bottom edge. */
+        Dial_Y0 = Dial_Y1 - 129;
         /* Centred, about 36% of the frame width.  A little smaller than the
          * flat layout reads as a panel slightly farther from the face and
          * leaves more of the eye's visible band around it. */
@@ -1778,7 +1778,11 @@ S32 NextDialCar() {
         iter = 1000000;
 
     if (iter >= 0) {
-        iter = 1 + iter / TIME_DELTA_CAR;
+        /* Wall-clock typewriter: type only whole TIME_DELTA_CAR intervals.
+           The extra leading 1 advanced at least one glyph per call, so the
+           rate followed the refresh rate instead of the authored 20 ms per
+           character (noticeably fast on the 90 Hz headset). */
+        iter = iter / TIME_DELTA_CAR;
 
         savetimer += iter * TIME_DELTA_CAR;
 
@@ -2157,6 +2161,10 @@ void Dial(S32 text, S32 drawscene) {
     S32 ret = 0;
     S32 flagabort = 0;
 
+    /* The action that opened the dialogue must be released before A can
+       close it. */
+    DialogEscapeReset();
+
 #ifndef COMPILATOR
     if (Control_IsVerbose())
         fprintf(stderr, "[control] modal: Dial(text=%d, DemoSlide=%d) -- dialogue; under DemoSlide "
@@ -2241,7 +2249,7 @@ void Dial(S32 text, S32 drawscene) {
 
         InitWhoSpeak(NumObjDial);
 
-        while ((TestSpeak())AND(MyKey != K_ESC) AND !(Input & I_MENUS) AND !DbgSkipModals) {
+        while ((TestSpeak())AND !DialogEscapeInput() AND !DbgSkipModals) {
             SpeakAnimation();
         }
         StopSpeak();
@@ -2264,7 +2272,6 @@ void Dial(S32 text, S32 drawscene) {
 
     OpenDial(text);
 
-    s_dialAPrev = (Input & I_ACTION_ALWAYS) != 0;
     while (TRUE) {
         ret = NextDialCar();
 
@@ -2303,7 +2310,7 @@ void Dial(S32 text, S32 drawscene) {
 
         if (ret == 2 && !DbgSkipModals) /*      Attente de Touche       */
         {
-            while (MyKey OR Input) {
+            while (DialogAdvanceKey() OR DialogAdvanceInput()) {
                 TestSpeak(); // Tu relaches ?
                 SpeakAnimation();
             }
@@ -2312,11 +2319,15 @@ void Dial(S32 text, S32 drawscene) {
                 S32 endtimer = TimerRefHR + DialNbLine * 1000;
 
                 while (TimerRefHR < endtimer
-                                        AND !MyKey AND !Input) {
+                                        AND !DialogAdvanceKey() AND !DialogAdvanceInput()) {
                     SpeakAnimation();
                 }
             } else
-                while (!MyKey AND !Input) {
+                while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
+                    if (DialogEscapeA()) {
+                        flagabort = 1;
+                        break;
+                    }
                     TestSpeak(); // Tu appuies ?
                     SpeakAnimation();
                 }
@@ -2324,18 +2335,11 @@ void Dial(S32 text, S32 drawscene) {
             DialNbLine = 0;
         }
 
-        {
-            const S32 aDown = (Input & I_ACTION_ALWAYS) != 0;
-            if (aDown && !s_dialAPrev)
-                flagabort = 1;
-            s_dialAPrev = aDown;
-        }
-
         // Harness (console `skipmodals`): abort the dialog immediately, as if the player pressed
         // Esc, so a headless run does not hang. This exits the whole typewriter loop on the first
         // iteration (the loop otherwise depends on TimerRefHR, which is frozen while a modal spins
         // under --fixed-dt) without changing quest state -- the script continues past the dialog.
-        if (MyKey == K_ESC OR Input & I_MENUS OR DbgSkipModals)
+        if (DialogEscapeInput() OR DbgSkipModals)
             flagabort = 1;
 
         if (((ret == 0) AND(!TestSpeak())) // Tout fini
@@ -2353,7 +2357,7 @@ void Dial(S32 text, S32 drawscene) {
     ) {
         ManageTime();
 
-        while (MyKey OR Input) {
+        while (DialogAdvanceKey() OR DialogAdvanceInput()) {
             SpeakAnimation();
         }
 
@@ -2361,11 +2365,13 @@ void Dial(S32 text, S32 drawscene) {
             S32 endtimer = TimerRefHR + DialNbLine * 1000;
 
             while (TimerRefHR < endtimer
-                                    AND !MyKey AND !Input) {
+                                    AND !DialogAdvanceKey() AND !DialogAdvanceInput()) {
                 SpeakAnimation();
             }
         } else
-            while (!MyKey AND !Input) {
+            while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
+                if (DialogEscapeA())
+                    break;
                 SpeakAnimation();
             }
     }
@@ -2405,6 +2411,10 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
     //      S32     memoflagdisplaytext ;
     S32 dialstat = 1;
     S32 esc = FALSE;
+
+    /* The action that opened the dialogue must be released before A can
+       close it. */
+    DialogEscapeReset();
 
 #ifndef LBA_EDITOR
     ClearIncrusts(INCRUST_SYS_TEXT);
@@ -2464,7 +2474,6 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
         //              FlagDisplayText = memoflagdisplaytext ;
     }
 
-    s_dialAPrev = (Input & I_ACTION_ALWAYS) != 0;
     //      while( dialstat AND !esc )
     while (!esc) {
         PERSO_DialogUpdateWorld();
@@ -2501,21 +2510,23 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
         TestSpeak();
         if (dialstat == 2) // encore 1 page
         {
-            while (MyKey OR Input) {
+            while (DialogAdvanceKey() OR DialogAdvanceInput()) {
                 TestSpeak();
                 MyGetInput();
             }
 
-            while (!MyKey AND !Input) {
+            while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
+                if (DialogEscapeA()) {
+                    esc = TRUE;
+                    StopSpeak();
+                    break;
+                }
                 TestSpeak();
                 MyGetInput();
             }
         } else {
             MyGetInput();
-            const S32 aDown = (Input & I_ACTION_ALWAYS) != 0;
-            const S32 aPressed = aDown && !s_dialAPrev;
-            s_dialAPrev = aDown;
-            if ((MyKey == K_ESC OR Input & I_MENUS OR aPressed)
+            if (DialogEscapeInput()
                     OR((dialstat == 0) AND(!TestSpeak()))) // Tout fini
             {
                 // affiche fin du message a vitesse grand v

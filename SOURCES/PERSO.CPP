@@ -3761,6 +3761,10 @@ void ReadConfigFile(void) {
         DefFileBufferReadValueDefault("DisplayColorGrade", 0);
     if (DisplayColorGrade < 0 OR DisplayColorGrade > 2)
         DisplayColorGrade = 0;
+    DisplayNormalSmoothing =
+        DefFileBufferReadValueDefault("DisplayNormalSmoothing", FALSE);
+    if (DisplayNormalSmoothing < 0 OR DisplayNormalSmoothing > 1)
+        DisplayNormalSmoothing = FALSE;
     DisplaySubPixel = DefFileBufferReadValueDefault("DisplaySubPixel", DEF_DISPLAY_SUBPIXEL);
     if (DisplaySubPixel < 0 OR DisplaySubPixel > 1)
         DisplaySubPixel = DEF_DISPLAY_SUBPIXEL;
@@ -4034,6 +4038,7 @@ void WriteConfigFile(void) {
     DefFileBufferWriteValue("DisplayDither", DisplayDither);
     DefFileBufferWriteValue("DisplaySoftShadows", DisplaySoftShadows);
     DefFileBufferWriteValue("DisplayColorGrade", DisplayColorGrade);
+    DefFileBufferWriteValue("DisplayNormalSmoothing", DisplayNormalSmoothing);
     DefFileBufferWriteValue("DisplaySubPixel", DisplaySubPixel);
     DefFileBufferWriteValue("DisplaySharpen", DisplaySharpen);
     DefFileBufferWriteValue("MovieUpscale", MovieUpscale);

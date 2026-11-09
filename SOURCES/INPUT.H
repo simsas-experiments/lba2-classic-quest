@@ -127,6 +127,23 @@ extern void WriteInputConfig(void);
 //-------------------------------------------------------------------------
 extern void MyGetInput(void);
 //-------------------------------------------------------------------------
+/* Input bits that may advance a modal dialogue. On Quest, movement and camera
+   axes are excluded so a held stick cannot page through a scene-triggered
+   message. */
+extern U32 DialogAdvanceInput(void);
+/* MyKey equivalent of DialogAdvanceInput: filters the gamepad stick/trigger
+   scancodes that MyGetInput exposes as "any key" presses, and A, which is the
+   dialogue's Escape. */
+extern S32 DialogAdvanceKey(void);
+/* Dialogue-only Escape: desktop ESC/I_MENUS, and on Quest a fresh A press.
+   DialogEscapeReset is called when a dialogue opens so the A press that
+   triggered it must be released before A can close it. */
+extern S32 DialogEscapeInput(void);
+/* The Quest half of DialogEscapeInput, for waits that already accept every
+   other key: only a fresh A press counts, so desktop stays untouched. */
+extern S32 DialogEscapeA(void);
+extern void DialogEscapeReset(void);
+//-------------------------------------------------------------------------
 extern void WaitNoInput(void);
 //-------------------------------------------------------------------------
 extern void WaitInput(void);

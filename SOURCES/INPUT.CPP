@@ -13,6 +13,7 @@
 
 #include "CONSOLE/CONSOLE.H"
 #include <SYSTEM/INPUT.H>
+#include <SYSTEM/OPENXR.H>
 #include <SVGA/SCREEN.H>
 #include <SVGA/DIRTYBOX.H>
 
@@ -421,6 +422,77 @@ void MyGetInput() {
             WaitNoClick = 0;
     }
 #endif
+}
+
+//***************************************************************************
+U32 DialogAdvanceInput(void) {
+    U32 in = Input;
+
+    /* On the headset the left stick is I_JOY and the right stick is the camera
+       pair. A scene-triggered message (the found-object cinematic in
+       particular) opens while the player may still be walking, and the
+       generic any-key page wait would then consume that held movement as
+       "advance", paging the text faster than it can be read. Keep the button
+       bits only; A is the dialogue's Escape and is handled separately. The
+       desktop any-key behaviour is unchanged. */
+    if (OpenXR_IsActive())
+        in &= ~(U32)(I_JOY | I_CAMERA | I_CAMERA_LEVEL_PLUS |
+                     I_CAMERA_LEVEL_MOINS | I_ACTION_ALWAYS);
+
+    return in;
+}
+
+//***************************************************************************
+S32 DialogAdvanceKey(void) {
+    if (!OpenXR_IsActive())
+        return MyKey;
+
+    /* MyGetInput exposes the first newly pressed pad scancode through MyKey,
+       including stick directions and triggers. Those are the same movement
+       axes DialogAdvanceInput masks out, so do not let them count as "press
+       any key" in a dialogue. A is the dialogue's Escape, handled by
+       DialogEscapeInput; it must not advance the page as well. */
+    switch (MyKey) {
+    case K_GAMEPAD_LSTICK_UP:
+    case K_GAMEPAD_LSTICK_DOWN:
+    case K_GAMEPAD_LSTICK_LEFT:
+    case K_GAMEPAD_LSTICK_RIGHT:
+    case K_GAMEPAD_RSTICK_UP:
+    case K_GAMEPAD_RSTICK_DOWN:
+    case K_GAMEPAD_RSTICK_LEFT:
+    case K_GAMEPAD_RSTICK_RIGHT:
+    case K_GAMEPAD_LTRIGGER:
+    case K_GAMEPAD_RTRIGGER:
+    case K_GAMEPAD_A:
+        return 0;
+    default:
+        return MyKey;
+    }
+}
+
+//***************************************************************************
+static S32 s_dialogEscapeArmed = 0;
+
+void DialogEscapeReset(void) { s_dialogEscapeArmed = 0; }
+
+S32 DialogEscapeA(void) {
+    if (!OpenXR_IsActive())
+        return 0;
+    if (!(Input & I_ACTION_ALWAYS)) {
+        s_dialogEscapeArmed = 1;
+        return 0;
+    }
+    if (s_dialogEscapeArmed) {
+        s_dialogEscapeArmed = 0;
+        return 1;
+    }
+    return 0;
+}
+
+S32 DialogEscapeInput(void) {
+    if (MyKey == K_ESC || (Input & I_MENUS))
+        return 1;
+    return DialogEscapeA();
 }
 
 //***************************************************************************

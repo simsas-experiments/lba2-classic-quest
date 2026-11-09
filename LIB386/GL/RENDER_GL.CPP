@@ -195,7 +195,13 @@ extern "C" S32 DisplayStereo3D;
 extern "C" S32 DisplaySoftShadows;
 extern "C" S32 DisplaySubPixel;
 extern "C" S32 DisplayColorGrade;
+extern "C" S32 DisplayNormalSmoothing;
 extern "C" S32 FlagMovie; /* full-screen movie: Log index 0 is opaque */
+
+/* Body normal rebuilding lives with the object renderer; the GL path is its
+   only caller, and the software renderer keeps the authored normals. */
+extern "C" void NormalSmooth_SetEnabled(S32 enabled);
+extern "C" S32 NormalSmooth_Enabled(void);
 
 /* Present-side sharpening strength: 0 = off, 1 = low, 2 = high. */
 static float GL_SharpenAmount(void) {
@@ -1512,29 +1518,29 @@ static const char *s_fxaaFragSrc =
     "    float lumaM  = dot(rgbM, luma);\n"
     "    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));\n"
     "    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));\n"
+    "    vec3 rgb;\n"
     "    if (lumaMax - lumaMin <= 0.08) {\n"
-    "        gl_FragColor = vec4(ImageAdjust(PostFx(SharpenColor(\n"
-    "            rgbM, rgbNW, rgbNE, rgbSW, rgbSE), vTexCoord)), 1.0);\n"
-    "        return;\n"
+    "        rgb = SharpenColor(rgbM, rgbNW, rgbNE, rgbSW, rgbSE);\n"
+    "    } else {\n"
+    "        vec2 dir = vec2(-((lumaNW + lumaNE) - (lumaSW + lumaSE)),\n"
+    "                        ((lumaNW + lumaSW) - (lumaNE + lumaSE)));\n"
+    "        float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);\n"
+    "        float rcpMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+    "        dir = clamp(dir * rcpMin, vec2(-8.0), vec2(8.0)) * uTexel;\n"
+    "        vec3 rgbA = 0.5 * (\n"
+    "            texture2D(uTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
+    "            texture2D(uTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
+    "        vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
+    "            texture2D(uTex, uv + dir * -0.5).rgb +\n"
+    "            texture2D(uTex, uv + dir * 0.5).rgb);\n"
+    "        float lumaB = dot(rgbB, luma);\n"
+    "        if (lumaB < lumaMin || lumaB > lumaMax)\n"
+    "            rgb = SharpenColor(rgbA, rgbNW, rgbNE, rgbSW, rgbSE);\n"
+    "        else\n"
+    "            rgb = SharpenColor(rgbB, rgbNW, rgbNE, rgbSW, rgbSE);\n"
     "    }\n"
-    "    vec2 dir = vec2(-((lumaNW + lumaNE) - (lumaSW + lumaSE)),\n"
-    "                    ((lumaNW + lumaSW) - (lumaNE + lumaSE)));\n"
-    "    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);\n"
-    "    float rcpMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
-    "    dir = clamp(dir * rcpMin, vec2(-8.0), vec2(8.0)) * uTexel;\n"
-    "    vec3 rgbA = 0.5 * (\n"
-    "        texture2D(uTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
-    "        texture2D(uTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
-    "    vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
-    "        texture2D(uTex, uv + dir * -0.5).rgb +\n"
-    "        texture2D(uTex, uv + dir * 0.5).rgb);\n"
-    "    float lumaB = dot(rgbB, luma);\n"
-    "    if (lumaB < lumaMin || lumaB > lumaMax)\n"
-    "        gl_FragColor = vec4(ImageAdjust(PostFx(SharpenColor(\n"
-    "            rgbA, rgbNW, rgbNE, rgbSW, rgbSE), vTexCoord)), 1.0);\n"
-    "    else\n"
-    "        gl_FragColor = vec4(ImageAdjust(PostFx(SharpenColor(\n"
-    "            rgbB, rgbNW, rgbNE, rgbSW, rgbSE), vTexCoord)), 1.0);\n"
+    "    gl_FragColor =\n"
+    "        vec4(ImageAdjust(PostFx(rgb, vTexCoord)), 1.0);\n"
     "}\n";
 
 static GLuint s_fxaaProgram = 0;
@@ -3270,7 +3276,8 @@ static GLuint CompileShader(GLenum type, const char *src) {
     return shader;
 }
 
-static GLuint LinkProgram(GLuint vert, GLuint frag) {
+static GLuint LinkProgramAttribs(GLuint vert, GLuint frag,
+                                 const char *const *names, S32 count) {
     if (vert == 0 || frag == 0) {
         /* Attaching 0 fails silently per-shader and Mesa links the rest
            (e.g. a vertex-only program that rasterizes nothing) — fail
@@ -3283,6 +3290,12 @@ static GLuint LinkProgram(GLuint vert, GLuint frag) {
     }
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
+    /* Attribute locations belong to the program, and must be bound before
+       linking.  Binding them on a shader object is GL_INVALID_OPERATION and
+       lets the driver choose the layout instead. */
+    for (S32 i = 0; i < count; i++) {
+        glBindAttribLocation(prog, i, names[i]);
+    }
     glLinkProgram(prog);
 
     GLint ok = 0;
@@ -3292,6 +3305,10 @@ static GLuint LinkProgram(GLuint vert, GLuint frag) {
         return 0;
     }
     return prog;
+}
+
+static GLuint LinkProgram(GLuint vert, GLuint frag) {
+    return LinkProgramAttribs(vert, frag, NULL, 0);
 }
 
 /* ── FBO helpers (SSAA) ──────────────────────────────────────────────────── */
@@ -3917,9 +3934,9 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
         GLuint dzFrag =
             CompileShader(GL_FRAGMENT_SHADER, dzFragSrc);
         if (dzVert != 0 && dzFrag != 0) {
-            glBindAttribLocation(dzVert, 0, "aPos");
-            glBindAttribLocation(dzVert, 1, "aTexCoord");
-            s_depthRestoreProgram = LinkProgram(dzVert, dzFrag);
+            static const char *dzNames[2] = {"aPos", "aTexCoord"};
+            s_depthRestoreProgram =
+                LinkProgramAttribs(dzVert, dzFrag, dzNames, 2);
         }
         glDeleteShader(dzVert);
         glDeleteShader(dzFrag);
@@ -4002,15 +4019,10 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
 
     /* Same attribute layout for both programs: explicit binding indices so
        one vertex-array spec serves the legacy and array variants. */
-    {
-        static const char *names[6] = {"aPos", "aTexCoord", "aLight",
+    static const char *clutNames[6] = {"aPos", "aTexCoord", "aLight",
                                        "aZ", "aRepMask", "aMaterial"};
-        for (S32 i = 0; i < 6; i++) {
-            glBindAttribLocation(clutVert, i, names[i]);
-        }
-    }
 
-    s_clutProgram = LinkProgram(clutVert, clutFrag);
+    s_clutProgram = LinkProgramAttribs(clutVert, clutFrag, clutNames, 6);
     glDeleteShader(clutVert);
     glDeleteShader(clutFrag);
     if (s_clutProgram == 0) {
@@ -4076,10 +4088,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
         if (vert3 != NULL && frag3 != NULL) {
             v3 = CompileShader(GL_VERTEX_SHADER, vert3);
             f3 = CompileShader(GL_FRAGMENT_SHADER, frag3);
-            for (S32 i = 0; i < 6; i++) {
-                glBindAttribLocation(v3, i, attrNames[i]);
-            }
-            s_clut3Program = LinkProgram(v3, f3);
+            s_clut3Program =
+                LinkProgramAttribs(v3, f3, attrNames, 6);
         }
         free(vert3);
         free(frag3);
@@ -4172,10 +4182,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             tv = CompileShader(GL_VERTEX_SHADER, vert3);
             tf = CompileShader(GL_FRAGMENT_SHADER, frag3);
             if (tv != 0 && tf != 0) {
-                for (S32 i = 0; i < 6; i++) {
-                    glBindAttribLocation(tv, i, attrNames[i]);
-                }
-                s_terrainProgram = LinkProgram(tv, tf);
+                s_terrainProgram =
+                    LinkProgramAttribs(tv, tf, attrNames, 6);
             }
         }
         free(vert3);
@@ -4187,10 +4195,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             tv = CompileShader(GL_VERTEX_SHADER, s_terrainVertSrc);
             tf = CompileShader(GL_FRAGMENT_SHADER, s_clutFragSrc);
             if (tv != 0 && tf != 0) {
-                for (S32 i = 0; i < 6; i++) {
-                    glBindAttribLocation(tv, i, attrNames[i]);
-                }
-                s_terrainProgram = LinkProgram(tv, tf);
+                s_terrainProgram =
+                    LinkProgramAttribs(tv, tf, attrNames, 6);
             }
             glDeleteShader(tv);
             glDeleteShader(tf);
@@ -4292,10 +4298,8 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
         if (v3 != NULL && f3 != NULL) {
             dv = CompileShader(GL_VERTEX_SHADER, v3);
             df = CompileShader(GL_FRAGMENT_SHADER, f3);
-            for (S32 i = 0; i < 6; i++) {
-                glBindAttribLocation(dv, i, attrNames[i]);
-            }
-            s_decorProgram = LinkProgram(dv, df);
+            s_decorProgram =
+                LinkProgramAttribs(dv, df, attrNames, 6);
         }
         free(v3);
         free(f3);
@@ -4388,10 +4392,9 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
             lf = CompileShader(GL_FRAGMENT_SHADER, layerFrag);
         }
         if (lv != 0 && lf != 0) {
-            glBindAttribLocation(lv, 0, "aPos");
-            glBindAttribLocation(lv, 1, "aUV");
-            glBindAttribLocation(lv, 2, "aMaterial");
-            s_layerProgram = LinkProgram(lv, lf);
+            static const char *layerNames[3] = {"aPos", "aUV", "aMaterial"};
+            s_layerProgram =
+                LinkProgramAttribs(lv, lf, layerNames, 3);
         }
         free(layerFrag);
         glDeleteShader(lv);
@@ -4632,6 +4635,7 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
     s_texWidth = resX;
     s_texHeight = resY;
     s_initialized = 1;
+    NormalSmooth_SetEnabled(DisplayNormalSmoothing);
     GL_InvalidateGLState();
     /* Apply the configured anti-alias mode: the menu re-applies on change,
        but at boot nothing else did, so the cfg value was silently dead and
@@ -4687,6 +4691,7 @@ S32 GL_Renderer_Init(U32 resX, U32 resY) {
 }
 
 void GL_Renderer_Shutdown(void) {
+    NormalSmooth_SetEnabled(0);
     if (!s_initialized) {
         return;
     }
@@ -6572,7 +6577,11 @@ S32 GL_DecorGPUActive(void) {
     return (s_initialized && s_decorProgram != 0 && s_fbo != 0) ? 1 : 0;
 }
 
-U32 GL_DecorVBOEpoch(void) { return s_terrainEpoch; }
+U32 GL_DecorVBOEpoch(void) {
+    /* Smoothing changes the normals baked into every decor VBO, so fold the
+       toggle into the cache key and let the owner rebuild on change. */
+    return s_terrainEpoch * 2u + (NormalSmooth_Enabled() ? 1u : 0u);
+}
 
 U32 GL_CreateDecorVBO(const T_GL_DecorVertex *verts, U32 vertexCount) {
     if (!s_initialized || verts == NULL || vertexCount == 0) {
@@ -8630,6 +8639,11 @@ void GL_BeginFrame(void) {
        3 xBR rules — the last two are per-texture edge-directed sampling. */
     s_bilinearCLUT = DisplayTexFilter;
 
+    /* The object renderer shares the authored-normal path with software; the
+       GL frame turns the smoothed path on at the same point it reads the
+       other display options. */
+    NormalSmooth_SetEnabled(DisplayNormalSmoothing);
+
     s_frameSeq++;
     GL_BatchFlushCount = 0;
     s_terrainRenderedThisFrame = 0;
@@ -10143,6 +10157,10 @@ void GL_Present(const void *argbPixels, U32 pitch, U32 width, U32 height,
         } else {
             glUseProgram(s_program);
             glUniform1i(s_uTexLoc, 0);
+            /* Scene texel size for the sharpen neighbour taps; the overlay
+               pass uploads its own uTexel before drawing. */
+            glUniform2f(s_uTexelLoc, 1.0f / (GLfloat)s_sceneTargetW,
+                        1.0f / (GLfloat)s_sceneTargetH);
             /* The hi-res FBO is always drawn plainly; the Scale2x mode below is
          * for the 640x480 overlay only.  Pin it here or a stale Scale2x from
          * the previous frame's overlay draw would smear the FBO blit. */
@@ -10938,6 +10956,10 @@ void GL_PresentIndexed(const U8 *indices, U32 pitch, U32 width, U32 height,
         } else {
             glUseProgram(s_program);
             glUniform1i(s_uTexLoc, 0);
+            /* Scene texel size for the sharpen neighbour taps; the overlay
+               pass uploads its own uTexel before drawing. */
+            glUniform2f(s_uTexelLoc, 1.0f / (GLfloat)s_sceneTargetW,
+                        1.0f / (GLfloat)s_sceneTargetH);
             /* The hi-res FBO is always drawn plainly; the Scale2x mode below is
          * for the 640x480 overlay only.  Pin it here or a stale Scale2x from
          * the previous frame's overlay draw would smear the FBO blit. */

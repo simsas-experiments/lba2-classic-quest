@@ -1127,10 +1127,10 @@ S32 ChoosePlayerName(S32 mess, S32 flagflip, S32 flagnew) {
             timerdraw = TimerRefHR + TEMPO_SCREEN_SAVE;
         }
 
-        /* Quest A loads the selected save.  Keep it out of the save/new-game
-           path: that screen keeps the existing confirm keys. */
+        /* Quest A confirms the selected slot in both the load and save
+           screens, matching its menu-confirm role. */
         S32 loadFire = Input & I_FIRE;
-        if (OpenXR_IsActive() && !flagnew)
+        if (OpenXR_IsActive())
             loadFire |= Input & I_ACTION_ALWAYS;
 
         if (loadFire OR MyKey == K_ENTER OR MyKey == K_NUMPAD_ENTER OR mouse_fire) {
@@ -1175,7 +1175,7 @@ S32 ChoosePlayerName(S32 mess, S32 flagflip, S32 flagnew) {
                     strcpy(memoname, GamePathname);
                 }
 
-                while ((Input & I_FIRE) OR(OpenXR_IsActive() && !flagnew &&
+                while ((Input & I_FIRE) OR(OpenXR_IsActive() &&
                                            (Input & I_ACTION_ALWAYS)) OR
                            MyKey == K_ENTER)
                     MyGetInput();

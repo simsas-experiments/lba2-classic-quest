@@ -4,6 +4,10 @@
 #include "DIRECTORIES.H"
 #include "INPUT.H"
 #include "IMAGE_LOAD.H"
+#include "MESSAGE.H"
+#ifdef USE_GPURENDERER
+#include <GL/RENDER_GL.H>
+#endif
 
 #include <FILEIO/SAVEPNG.H>
 #include <SVGA/SCREEN.H>
@@ -1576,6 +1580,14 @@ void DoFoundObj(S32 numvar) {
     if (FlagDisplayText)
         OpenDial(numobj);
 
+    /* GL's scene pass clears Log every frame, so it needs the same
+       dialogue-strip snapshot Dial() takes: capture the box/text before each
+       AffScene and restore it after the clear.  Without the capture the clear
+       has nothing to restore and the found-object box vanishes, leaving only
+       the glyphs drawn after the clear. */
+    Dial_OverlayHold(1);
+    Dial_OverlayCapture();
+
     dialstat = FlagDisplayText; // 0 or 1, Still or Run
 
     flag = 0;
@@ -1660,6 +1672,10 @@ void DoFoundObj(S32 numvar) {
     workflag = ptrobj->WorkFlags;
     ptrobj->WorkFlags &= ~MANUAL_INTER_FRAME;
 
+    /* The action that picked the object up must be released before A can
+       close the found-object dialogue. */
+    DialogEscapeReset();
+
     while (flag != 2) {
         ManageTime();
         DoTextureAnimation();
@@ -1675,6 +1691,7 @@ void DoFoundObj(S32 numvar) {
 
         UnsetClip(); // Tiens compte du ModeDesiredY
 
+        Dial_OverlayCapture();
         AffScene(AFF_OBJETS_NO_FLIP); // With Boxes & no BoxUpdate
 
         /*		ModeDesiredY = 480 ;// To gain some time...
@@ -1759,8 +1776,15 @@ void DoFoundObj(S32 numvar) {
            item and dialogue strip there, same pattern as ui dialog and ui
            holomap) and set flag=2 so the modal loop exits cleanly. */
         if (s_found_capture_path[0] && --s_found_capture_countdown <= 0) {
-            SavePNG(s_found_capture_path, Log, (S32)ModeDesiredX,
-                    (S32)ModeDesiredY, PtrPal);
+#ifdef USE_GPURENDERER
+            /* GL mode: Log holds the box and text, the scene lives in the
+               FBO.  Capture the composite the player sees. */
+            if (GPURendererActive)
+                GL_SavePresentPNG(s_found_capture_path);
+            else
+#endif
+                SavePNG(s_found_capture_path, Log, (S32)ModeDesiredX,
+                        (S32)ModeDesiredY, PtrPal);
             s_found_capture_path[0] = '\0';
             flag = 2;
             break;
@@ -1768,7 +1792,7 @@ void DoFoundObj(S32 numvar) {
 
         MyGetInput();
 
-        if (!DemoSlide AND(MyKey == K_ESC OR Input & I_MENUS) AND !flag) {
+        if (!DemoSlide AND DialogEscapeInput() AND !flag) {
             //			esc  = TRUE 				;
             StopSpeak();
             flag = 1;
@@ -1783,8 +1807,12 @@ void DoFoundObj(S32 numvar) {
 
         //		else
         {
-            if (Input OR MyKey) {
-                if (keyreleased)
+            if (DialogAdvanceInput() OR DialogAdvanceKey()) {
+                /* A press while the page is still typing is not an advance.
+                   Latched here, the pick-up action (or any key pressed while
+                   reading) would fly the box out the instant the last glyph
+                   lands, before the player has read a finished line. */
+                if (keyreleased && dialstat != 1)
                     keypress = TRUE;
             } else
                 keyreleased = TRUE;
@@ -1824,7 +1852,7 @@ void DoFoundObj(S32 numvar) {
 */
     //		if( !esc )
     {
-        while (TestSpeak() AND(MyKey != K_ESC AND !(Input & I_MENUS)))
+        while (TestSpeak() AND !DialogEscapeInput())
             MyGetInput();
     }
     //	}
@@ -1837,6 +1865,7 @@ void DoFoundObj(S32 numvar) {
     //	PtrInit3DView() ;
     //	CameraCenter( 0 ) ;
 
+    Dial_OverlayHold(0);
     RestoreScreen();
 
     InitDial(START_FILE_ISLAND + Island);
