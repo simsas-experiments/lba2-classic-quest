@@ -116,6 +116,9 @@ extern void GetNextLine(void);
 extern void InitEndPage(void);
 extern void NextDialWindow();
 extern S32 NextDialCar(void);
+/* Fast-forward the current page on the next NextDialCar call.  Used by the
+   Quest A skip before that call would be reached by the typewriter clock. */
+extern void Dial_SkipPage(void);
 extern void CloseDial(void);
 extern void InitWhoSpeak(S32 numobj);
 extern void ClearWhoSpeak(void);

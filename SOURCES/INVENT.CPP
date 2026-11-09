@@ -1672,6 +1672,7 @@ void DoFoundObj(S32 numvar) {
     workflag = ptrobj->WorkFlags;
     ptrobj->WorkFlags &= ~MANUAL_INTER_FRAME;
 
+    S32 skipReady = 0;
     while (flag != 2) {
         ManageTime();
         DoTextureAnimation();
@@ -1787,6 +1788,17 @@ void DoFoundObj(S32 numvar) {
         }
 
         MyGetInput();
+
+        /* Quest A fast-forwards the current page.  A fresh press is required
+           so the action that picked the item up cannot skip its own text. */
+        if (OpenXR_IsActive()) {
+            if (!(Input & I_ACTION_ALWAYS)) {
+                skipReady = 1;
+            } else if (skipReady && dialstat == 1) {
+                Dial_SkipPage();
+                skipReady = 0;
+            }
+        }
 
         if (!DemoSlide AND(MyKey == K_ESC OR Input & I_MENUS) AND !flag) {
             //			esc  = TRUE 				;

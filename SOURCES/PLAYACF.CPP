@@ -559,6 +559,7 @@ S32 PlayAcf(const char *name) {
         int everFocused = 0; // set once the window is focused; a never-focused run
                              // (e.g. a headless capture) then never freezes
         U32 freezeStart = 0; // SDL_GetTicks when the freeze began
+        S32 skipReady = 0;   // Quest A skip waits for a fresh press
         for (unsigned long c = 0; c < f; c++) {
             /* Push this frame's audio (skip for c < prebufFrames, already in stream from pre-fill) */
             if (numTracks > 0 && c >= prebufFrames) {
@@ -611,7 +612,11 @@ S32 PlayAcf(const char *name) {
             for (;;) {
                 MyGetInput();
                 ManageTime();
-                if (MyKey == K_ESC || (Input & I_MENUS))
+                if (OpenXR_IsActive() && !(Input & I_ACTION_ALWAYS))
+                    skipReady = 1;
+                if (MyKey == K_ESC || (Input & I_MENUS) ||
+                    (OpenXR_IsActive() && skipReady &&
+                     (Input & I_ACTION_ALWAYS)))
                     goto fin_play;
                 if (AppActive)
                     everFocused = 1;

@@ -81,10 +81,19 @@ actions.
 
 | Input | Action |
 |---|---|
-| A | Advance the dialogue to the next page or box |
+| A | Advance to the next page, or fast-forward the page currently typing |
 
 Movement and camera axes do not advance a dialogue on the headset, so walking
 into a scene-triggered message cannot page through it.
+
+## Movies
+
+| Input | Action |
+|---|---|
+| A | Skip the movie |
+
+A must be released and pressed again after a movie starts, so the button that
+launched the sequence cannot skip it immediately.
 
 ## Cheats
 

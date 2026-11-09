@@ -55,6 +55,8 @@ S32 FlagRestoreCD = 0;
 S32 FlagDial = DIAL_DEF;
 
 S32 FlagSpeedMessage = FALSE; // cf MyDial() and NextDialCar()
+/* Set by Dial_SkipPage(), consumed by the next NextDialCar() call. */
+static S32 s_dialSkipPage = 0;
 
 S32 DialNbLine; // pour la version demo le 02/08/96
 
@@ -1752,6 +1754,7 @@ S32 NextDialCar() {
 
     if (FlagRunningDial == FALSE) {
         flagnewpage = TRUE;
+        s_dialSkipPage = 0;
         return 0;
     }
 
@@ -1776,6 +1779,11 @@ S32 NextDialCar() {
 
     if (FlagSpeedMessage)
         iter = 1000000;
+
+    if (s_dialSkipPage) {
+        iter = 1000000;
+        s_dialSkipPage = 0;
+    }
 
     if (iter >= 0) {
         /* Wall-clock typewriter: type only whole TIME_DELTA_CAR intervals.
@@ -1889,6 +1897,8 @@ void CloseDial() {
     FlagRunningDial = FALSE;
     NextDialCar(); // to force it to reset
 }
+
+void Dial_SkipPage(void) { s_dialSkipPage = 1; }
 
 /* See MESSAGE.H.  The stereo scene render is a full redraw per eye, while the
    flat dialogue relied on incremental frames that left the strip below the
@@ -2268,6 +2278,7 @@ void Dial(S32 text, S32 drawscene) {
 
     OpenDial(text);
 
+    S32 skipReady = 0;
     while (TRUE) {
         ret = NextDialCar();
 
@@ -2278,6 +2289,18 @@ void Dial(S32 text, S32 drawscene) {
         /* Two renders per typewriter step: this is the original pacing, one
            step of the message per two presented frames. */
         SpeakAnimation();
+
+        /* Quest A skips the page.  Wait for a fresh press so the action that
+           opened the dialogue cannot fast-forward it, and let the page wait
+           below handle A once the page has actually stopped. */
+        if (OpenXR_IsActive()) {
+            if (!(Input & I_ACTION_ALWAYS)) {
+                skipReady = 1;
+            } else if (skipReady && ret == 1) {
+                Dial_SkipPage();
+                skipReady = 0;
+            }
+        }
 
         /* Harness one-shot capture.  Read Log (back buffer), not Screen --
            Dial's typewriter renders into Log via the dialogue compositor
