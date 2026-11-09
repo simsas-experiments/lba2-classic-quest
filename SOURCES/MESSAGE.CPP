@@ -2297,6 +2297,7 @@ void Dial(S32 text, S32 drawscene) {
             if (!(Input & I_ACTION_ALWAYS)) {
                 skipReady = 1;
             } else if (skipReady && ret == 1) {
+                StopSpeak();
                 Dial_SkipPage();
                 skipReady = 0;
             }
@@ -2346,6 +2347,11 @@ void Dial(S32 text, S32 drawscene) {
                     TestSpeak(); // Tu appuies ?
                     SpeakAnimation();
                 }
+
+            /* A page turn skips the rest of the page's voice too.  The demo
+               timer is not a player skip, so it leaves the voice alone. */
+            if (!DemoSlide)
+                StopSpeak();
 
             DialNbLine = 0;
         }

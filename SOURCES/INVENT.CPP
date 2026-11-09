@@ -1795,6 +1795,7 @@ void DoFoundObj(S32 numvar) {
             if (!(Input & I_ACTION_ALWAYS)) {
                 skipReady = 1;
             } else if (skipReady && dialstat == 1) {
+                StopSpeak();
                 Dial_SkipPage();
                 skipReady = 0;
             }
@@ -1842,6 +1843,7 @@ void DoFoundObj(S32 numvar) {
                 DialNbLine = 0;
                 dialstat = 1; // continue
                 keyreleased = FALSE;
+                StopSpeak();
             }
         }
     }
