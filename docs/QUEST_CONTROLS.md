@@ -81,10 +81,13 @@ actions.
 
 | Input | Action |
 |---|---|
-| A | Advance the dialogue to the next page or box |
+| A | Close the dialogue, like Esc on desktop |
+| B, X, Y | Advance to the next page or box |
 
-Movement and camera axes do not advance a dialogue on the headset, so walking
-into a scene-triggered message cannot page through it.
+A must be released and pressed again after a dialogue opens, so the action
+that triggered it cannot close it immediately. Movement and camera axes do not
+advance a dialogue on the headset, so walking into a scene-triggered message
+cannot page through it.
 
 ## Cheats
 

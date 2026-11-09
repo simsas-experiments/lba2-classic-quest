@@ -1672,6 +1672,10 @@ void DoFoundObj(S32 numvar) {
     workflag = ptrobj->WorkFlags;
     ptrobj->WorkFlags &= ~MANUAL_INTER_FRAME;
 
+    /* The action that picked the object up must be released before A can
+       close the found-object dialogue. */
+    DialogEscapeReset();
+
     while (flag != 2) {
         ManageTime();
         DoTextureAnimation();
@@ -1788,7 +1792,7 @@ void DoFoundObj(S32 numvar) {
 
         MyGetInput();
 
-        if (!DemoSlide AND(MyKey == K_ESC OR Input & I_MENUS) AND !flag) {
+        if (!DemoSlide AND DialogEscapeInput() AND !flag) {
             //			esc  = TRUE 				;
             StopSpeak();
             flag = 1;
@@ -1848,7 +1852,7 @@ void DoFoundObj(S32 numvar) {
 */
     //		if( !esc )
     {
-        while (TestSpeak() AND(MyKey != K_ESC AND !(Input & I_MENUS)))
+        while (TestSpeak() AND !DialogEscapeInput())
             MyGetInput();
     }
     //	}

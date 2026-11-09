@@ -2161,6 +2161,10 @@ void Dial(S32 text, S32 drawscene) {
     S32 ret = 0;
     S32 flagabort = 0;
 
+    /* The action that opened the dialogue must be released before A can
+       close it. */
+    DialogEscapeReset();
+
 #ifndef COMPILATOR
     if (Control_IsVerbose())
         fprintf(stderr, "[control] modal: Dial(text=%d, DemoSlide=%d) -- dialogue; under DemoSlide "
@@ -2245,7 +2249,7 @@ void Dial(S32 text, S32 drawscene) {
 
         InitWhoSpeak(NumObjDial);
 
-        while ((TestSpeak())AND(MyKey != K_ESC) AND !(Input & I_MENUS) AND !DbgSkipModals) {
+        while ((TestSpeak())AND !DialogEscapeInput() AND !DbgSkipModals) {
             SpeakAnimation();
         }
         StopSpeak();
@@ -2320,6 +2324,10 @@ void Dial(S32 text, S32 drawscene) {
                 }
             } else
                 while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
+                    if (DialogEscapeA()) {
+                        flagabort = 1;
+                        break;
+                    }
                     TestSpeak(); // Tu appuies ?
                     SpeakAnimation();
                 }
@@ -2331,7 +2339,7 @@ void Dial(S32 text, S32 drawscene) {
         // Esc, so a headless run does not hang. This exits the whole typewriter loop on the first
         // iteration (the loop otherwise depends on TimerRefHR, which is frozen while a modal spins
         // under --fixed-dt) without changing quest state -- the script continues past the dialog.
-        if (MyKey == K_ESC OR Input & I_MENUS OR DbgSkipModals)
+        if (DialogEscapeInput() OR DbgSkipModals)
             flagabort = 1;
 
         if (((ret == 0) AND(!TestSpeak())) // Tout fini
@@ -2362,6 +2370,8 @@ void Dial(S32 text, S32 drawscene) {
             }
         } else
             while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
+                if (DialogEscapeA())
+                    break;
                 SpeakAnimation();
             }
     }
@@ -2401,6 +2411,10 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
     //      S32     memoflagdisplaytext ;
     S32 dialstat = 1;
     S32 esc = FALSE;
+
+    /* The action that opened the dialogue must be released before A can
+       close it. */
+    DialogEscapeReset();
 
 #ifndef LBA_EDITOR
     ClearIncrusts(INCRUST_SYS_TEXT);
@@ -2502,12 +2516,17 @@ S32 MyDial(S32 nummess) // attends une touche si autre page sinon continue
             }
 
             while (!DialogAdvanceKey() AND !DialogAdvanceInput()) {
+                if (DialogEscapeA()) {
+                    esc = TRUE;
+                    StopSpeak();
+                    break;
+                }
                 TestSpeak();
                 MyGetInput();
             }
         } else {
             MyGetInput();
-            if ((MyKey == K_ESC OR Input & I_MENUS)
+            if (DialogEscapeInput()
                     OR((dialstat == 0) AND(!TestSpeak()))) // Tout fini
             {
                 // affiche fin du message a vitesse grand v
